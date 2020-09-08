@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no, width=device-width">
+    <title>VizCube</title>
+    <link rel="stylesheet" href="https://a.amap.com/jsapi_demos/static/demo-center/css/demo-center.css"/>
+    <link rel="stylesheet" href="//apps.bdimg.com/libs/jqueryui/1.10.4/css/jquery-ui.min.css">
+    <!-- 加载地图JSAPI脚本 -->
+    <script src="https://webapi.amap.com/maps?v=1.4.15&key=42b17e25638335817aa93a1a83fdad7b&plugin=AMap.MouseTool"></script>
+    <script src="http://apps.bdimg.com/libs/jquery/2.1.4/jquery.min.js"></script>
+    <script type="text/javascript" src="../static/echarts.min.js"></script>
+    <script src="//apps.bdimg.com/libs/jquery/1.10.2/jquery.min.js"></script>
+    <script src="//apps.bdimg.com/libs/jqueryui/1.10.4/jquery-ui.min.js"></script>
+
+    <style>
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+        }
+
+        .btn {
+            width: 6rem;
+            margin: 0 1rem 0 4.5rem;
+        }
+
+        #map {
+            margin: 10px;
+            width: 52%;
+            height: 500px;
+            float: left;
+            display: inline;
+        }
+
+        .input-card {
+            position: relative;
+            width: fit-content;
+            z-index: 99;
+            left: 75%;
+            top: 80%;
+        }
+
+        #bar-container {
+            margin: 10px;
+            width: 45%;
+            height: 500px;
+            float: right;
+            display: inline;
+        }
+
+        #top {
+            margin: 10px;
+            background: antiquewhite;
+            width: auto;
+            overflow: auto;
+        }
+
+        #time-zoom {
+            margin: 10px 0 10px 10px;
+            width: 15%;
+            height: 300px;
+            float: left;
+        }
+
+        .timezoom {
+            width: 50%;
+            height: 300px;
+            background: antiquewhite;
+        }
+
+        #line-container {
+            margin: 10px 10px 10px 0;
+            height: 300px;
+            width: 83%;
+            float: right;
+        }
+
+        select {
+            width: 100px;
+        }
+
+        ul.ul-style {
+            list-style: none;
+            margin: 0;
+            padding-left: 0;
+        }
+
+        .progress-label {
+            position: absolute;
+            left: 50%;
+            top: 10px;
+            font-weight: bold;
+            text-shadow: 1px 1px 0 #fff;
+            margin: 20px;
+            display: none;
+        }
+
+        .time-vertical {
+            margin-left: 40px;
+            list-style-type: none;
+            border-left: 1px solid #707070;
+            padding: 0px;
+            height: max-content;
+        }
+
+        .time-vertical li {
+            height: 50px;
+            position: relative;
+        }
+
+        .time-vertical li p {
+            display: inline-block;
+            margin-left: 20px;
+            margin-top: 15px;
+            text-decoration: none;
+            color: #000;
+        }
+
+        .time-vertical li b:before {
+            content: '';
+            position: absolute;
+            top: 15px;
+            left: -12px;
+            width: 18px;
+            height: 18px;
+            border: 2px solid #98FB98;
+            border-radius: 10px;
+            background: #98FB98;
+        }
+
+        .time-vertical li span {
+            position: absolute;
+            color: #fff;
+            top: 18px;
+            left: -6px;
+        }
+
+        .amap-icon img,
+        .amap-marker-content img {
+            width: 25px;
+            height: 34px;
+        }
+    </style>
+</head>
+<body>
+<div id="top">
+    <div style="float:left; margin: 20px">
+        <button id="query_btn" onclick="queryCube()">Query</button>
+    </div>
+    <div id="progressbar" style="margin: 20px;">
+        <div class="progress-label">加载...</div>
+    </div>
+    <div style="float: right; margin: 20px">
+        <label>选择CSV上传</label>
+        <input value="选择CSV上传" type=file name=file id="upload_file" onchange="getDimensions()">
+        <button id="build_btn" onclick="buildCube()">Build Cube</button>
+        <br>
+        <label>选择Cube加载</label>
+        <input value="选择Cube加载" type=file name=file id="load_file" onchange="loadCube()">
+    </div>
+
+    <div style="float:right; margin: 20px">
+        <button style="float:left; margin-top: 25px; margin-right: 5px;" onclick="addOptions()">+</button>
+        <div id="" style="float:left; margin-right: 5px;">
+            <label for="dimensions">SELECT DIMENSIONS</label>
+            <ul class="ul-style" id="dimensions">
+                <li>
+                    <select id="dimension0">
+                    </select>
+                </li>
+            </ul>
+        </div>
+        <div id="" style="float:right;">
+            <label for="types">SELECT TYPES</label>
+            <ul class="ul-style" id="types">
+                <li>
+                    <select id="type0">
+                    </select>
+                </li>
+            </ul>
+        </div>
+
+    </div>
+</div>
+
+<div id="mid" style="height: 500px">
+    <div id="map" style="height: 500px">
+        <div class="input-card">
+            <div class="input-item">
+                <input type="radio" name='func' value='zoomIn'><span class="input-text">拉框放大</span>
+                <input type="radio" name='func' value='zoomOut'><span class="input-text">拉框缩小</span>
+            </div>
+            <div class="input-item">
+                <input id="close" type="button" class="btn" value="关闭"/>
+            </div>
+        </div>
+    </div>
+
+    <div id="bar-container"></div>
+</div>
+
+<div id="bottom">
+    <div id="time-zoom">
+        <div id="time-zoom-year" class="timezoom" style="float:left;">
+            <ul class="time-vertical">
+                <li><b></b><span>1</span>
+                    <p>2017</p></li>
+                <li><b></b><span>2</span>
+                    <p>2018</p></li>
+                <li><b></b><span>3</span>
+                    <p>2019</p></li>
+                <li><b></b><span>4</span>
+                    <p>2020</p></li>
+                <li><b></b><span>5</span>
+                    <p>2021</p></li>
+            </ul>
+        </div>
+        <div id="time-zoom-month" class="timezoom" style="float:right;">
+            <ul class="time-vertical">
+                <li><b></b><span>1</span>
+                    <p>Jan</p></li>
+                <li><b></b><span>2</span>
+                    <p>Mar</p></li>
+                <li><b></b><span>3</span>
+                    <p>Jun</p></li>
+                <li><b></b><span>4</span>
+                    <p>Sep</p></li>
+                <li><b></b><span>5</span>
+                    <p>Dec</p></li>
+            </ul>
+        </div>
+    </div>
+    <div id="line-container">
+    </div>
+</div>
+
+
+<script>
+    let n = 0;
+    var D = [];
+    var T = ['categorical', 'spatial', 'temporal'];
+
+    var map = new AMap.Map('map', {
+        mapStyle: 'amap://styles/cdb8ec436e62429105eeeda4afcdacb1',
+        resizeEnable: true, //是否监控地图容器尺寸变化
+        zoom: 14, //初始化地图层级
+        center: [121.476105, 31.227226] //初始化地图中心点
+    });
+    //heatmap对象
+    var heatmap = null;
+    // MouseTool对象
+    var mouseTool = new AMap.MouseTool(map);
+    mouseTool.on('draw', function (e) {
+        console.log(e.obj.getPath());
+        leftTop = e.obj.getPath()[0];
+        rightBottom = e.obj.getPath()[2];
+        center = {
+            'lat': (leftTop['lat'] + rightBottom['lat']) / 2,
+            'lng': (leftTop['lng'] + rightBottom['lng']) / 2
+        };
+        console.log(center);
+        latError = leftTop['lat'] - rightBottom['lat'];
+        lngError = rightBottom['lng'] - leftTop['lng'];
+        maxError = latError > lngError ? latError : lngError;
+        geohashLength = 0;
+        if (maxError > 2.8) {
+            geohashLength = 1
+        } else if (maxError > 0.70) {
+            geohashLength = 2;
+        } else if (maxError > 0.087) {
+            geohashLength = 3;
+        } else if (maxError > 0.022) {
+            geohashLength = 4;
+        } else if (maxError > 0.0027) {
+            geohashLength = 5;
+        } else if (maxError > 0.00068) {
+            geohashLength = 6;
+        } else if (maxError > 0.000086) {
+            geohashLength = 7;
+        } else if (maxError > 0.000021) {
+            geohashLength = 8;
+        } else if (maxError > 0.00000268) {
+            geohashLength = 9;
+        } else if (maxError > 0.00000067) {
+            geohashLength = 10;
+        } else if (maxError > 0.00000008) {
+            geohashLength = 11;
+        } else {
+            geohashLength = 12;
+        }
+        console.log(geohashLength);
+        barChart.showLoading();
+        lineChart.showLoading();
+        $.ajax({
+            url: "/vizcube/query/spatial",
+            type: "POST",
+            data: JSON.stringify({
+                'limit': {
+                    'top': leftTop['lat'],
+                    'bottom': rightBottom['lat'],
+                    'left': leftTop['lng'],
+                    'right': rightBottom['lng']
+                },
+                'lnglat': center,
+                'geohashLength': geohashLength,
+            }),
+            contentType: 'application/json',
+            success: function (data) {
+                console.log(data);
+                barChart.hideLoading();
+                lineChart.hideLoading();
+                barChart.setOption({
+                    xAxis: [{
+                        data: data['categorical'][0].x_data
+                    }, {
+                        data: data['categorical'][1].x_data
+                    }],
+                    series: [{
+                        // 根据名字对应到相应的系列
+                        name: 'COUNT',
+                        data: data['categorical'][0].y_data
+                    }, {
+                        name: 'COUNT',
+                        data: data['categorical'][1].y_data
+                    }]
+                });
+                lineChart.setOption({
+                    dataZoom: [
+                        {   // 默认控制x轴。
+                            type: 'slider', // 这个 dataZoom 组件是 slider 型 dataZoom 组件
+                            start: 0,      // 左边在 0% 的位置。
+                            end: 100         // 右边在 100% 的位置。
+                        }
+                    ],
+                    xAxis: {
+                        data: data['temporal'].x_data
+                    },
+                    series: [{
+                        name: 'COUNT',
+                        data: data['temporal'].y_data
+                    }]
+                });
+                drawHeatmap(data['spatial']);
+            }
+        });
+        mouseTool.close(true); //关闭，并清除覆盖物
+        for (var i = 0; i < radios.length; i += 1) {
+            radios[i].checked = false;
+        }
+    });
+
+    var barChart = echarts.init(document.getElementById("bar-container"), 'dark');
+    var barChartOpts = {
+        title: {
+            text: 'Bar Chart'
+        },
+        grid: [
+            {top: 40, bottom: '58%'},
+            {top: '58%', bottom: 40}
+        ],
+        tooltip: {
+        },
+        brush: {
+            xAxisIndex: 'all',
+            toolbox: ['lineX', 'clear'],
+            outOfBrush: {
+                colorAlpha: 0.1
+            },
+            throttleType: 'debounce',
+            throttleDelay: '5'
+        },
+        legend: {
+            data: ['link_id', 'vehicle_id']
+        },
+        xAxis: [
+            {type: 'category', gridIndex: 0, data: []},
+            {type: 'category', gridIndex: 1, data: []}
+        ],
+        yAxis: [
+            {type: 'value', gridIndex: 0},
+            {type: 'value', gridIndex: 1}
+        ],
+        series: [
+            {name: 'link_id', type: 'bar', xAxisIndex: 0, yAxisIndex: 0, data: []},
+            {name: 'vehicle_id', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: []}
+        ]
+    };
+    barChart.setOption(barChartOpts);
+    barChart.on('brushEnd', function (params) {
+        var area = params.areas[0];
+        {#"grid-- series 0 0"#}
+        var gridIdx = parseInt(area.panelId[14]);
+        var xData = barChart.getOption().xAxis[gridIdx].data;
+        var selected = [];
+
+        for(var i = area.coordRange[0]; i <= area.coordRange[1]; i++){
+            selected.push(xData[i]);
+        }
+        console.log(selected);
+        barChart.showLoading();
+        lineChart.showLoading();
+        $.ajax({
+            url: "/vizcube/backward_query",
+            type: "POST",
+            data: JSON.stringify({
+                "dimension": barChart.getOption().series[gridIdx].name,
+                "value": selected,
+                "type": "categorical",
+                "flag": 1
+            }),
+            contentType: 'application/json',
+            success: function (data) {
+                console.log(data);
+                barChart.hideLoading();
+                lineChart.hideLoading();
+                barChart.setOption({
+                    xAxis: [{
+                        data: data['categorical'][0].x_data
+                    }, {
+                        data: data['categorical'][1].x_data
+                    }],
+                    series: [{
+                        // 根据名字对应到相应的系列
+                        name: 'link_id',
+                        data: data['categorical'][0].y_data
+                    }, {
+                        name: 'vehicle_id',
+                        data: data['categorical'][1].y_data
+                    }]
+                });
+                lineChart.setOption({
+                    xAxis: {
+                        data: data['temporal'].x_data
+                    },
+                    series: [{
+                        name: 'COUNT',
+                        data: data['temporal'].y_data
+                    }]
+                });
+                drawHeatmap(data['spatial']);
+            },
+            error: function (data) {
+                alert(data);
+                console.log(data);
+            }
+        });
+    });
+
+    var lineChart = echarts.init(document.getElementById("line-container"), 'dark');
+    var lineChartOpts = {
+        title: {
+            text: 'Line Chart'
+        },
+        tooltip: {},
+        dataZoom: [
+            {   // 默认控制x轴。
+                type: 'slider', // 这个 dataZoom 组件是 slider 型 dataZoom 组件
+                start: 0,      // 左边在 0% 的位置。
+                end: 100         // 右边在 100% 的位置。
+            }
+        ],
+        legend: {
+            data: ['COUNT']
+        },
+        xAxis: {
+            type: 'category', data: []
+        },
+        yAxis: {
+            type: 'value'
+        },
+        series: [
+            {name: 'COUNT', type: 'line', data: []}
+        ]
+    };
+    lineChart.setOption(lineChartOpts);
+    var lastStartIndex=0, lastEndIndex=100;
+    lineChart.getZr().on('mouseup', 'dataZoom', function (params) {
+        var startIndex = lineChart.getOption().dataZoom[0].startValue;
+        var endIndex = lineChart.getOption().dataZoom[0].endValue;
+        var xData = lineChart.getOption().xAxis[0].data;
+        var flag = 1;
+        if(startIndex < lastStartIndex || endIndex > lastEndIndex){
+            flag = 0
+        }
+        lastStartIndex = startIndex;
+        lastEndIndex = endIndex;
+        barChart.showLoading();
+        lineChart.showLoading();
+        $.ajax({
+            url: "/vizcube/backward_query",
+            type: "POST",
+            data: JSON.stringify({
+                "dimension": "timestep",
+                "value": [xData[startIndex], xData[endIndex]],
+                "type": "temporal",
+                "flag": flag
+            }),
+            contentType: 'application/json',
+            success: function (data) {
+                console.log(data);
+                barChart.hideLoading();
+                lineChart.hideLoading();
+                barChart.setOption({
+                    xAxis: [{
+                        data: data['categorical'][0].x_data
+                    }, {
+                        data: data['categorical'][1].x_data
+                    }],
+                    series: [{
+                        // 根据名字对应到相应的系列
+                        name: 'link_id',
+                        data: data['categorical'][0].y_data
+                    }, {
+                        name: 'vehicle_id',
+                        data: data['categorical'][1].y_data
+                    }]
+                });
+                drawHeatmap(data['spatial']);
+            },
+            error: function (data) {
+                alert(data);
+                console.log(data);
+            }
+        });
+    });
+
+
+    function drawHeatmap(data) {
+        if (heatmap != null)
+            heatmap.setDataSet({
+                data: [],
+                max: 0
+            });
+        map.plugin(["AMap.Heatmap"], function () {
+            //初始化heatmap对象
+            heatmap = new AMap.Heatmap(map, {
+                radius: 25, //给定半径
+                opacity: [0, 0.8],
+                gradient: {
+                    0.5: 'blue',
+                    0.65: 'rgb(117,211,248)',
+                    0.7: 'rgb(0, 255, 0)',
+                    0.9: '#ffea00',
+                    1.0: 'red'
+                }
+            });
+            //设置数据集
+            heatmap.setDataSet({
+                data: data['data'],
+                max: data['max']
+            });
+        });
+    }
+
+    function draw(type) {
+        switch (type) {
+            case 'zoomIn': {
+                mouseTool.rectangle({
+                    strokeColor: '#80d8ff',
+                    fillColor: '#80d8ff',
+                    fillOpacity: 0.3
+                });
+                break;
+            }
+            case 'zoomOut': {
+                mouseTool.rectZoomOut({
+                    strokeColor: '#80d8ff',
+                    fillColor: '#80d8ff',
+                    fillOpacity: 0.3
+                });
+                break;
+            }
+        }
+    }
+
+    var radios = document.getElementsByName('func');
+    for (var i = 0; i < radios.length; i += 1) {
+        radios[i].onchange = function (e) {
+            draw(e.target.value);
+        }
+    }
+
+    document.getElementById('close').onclick = function () {
+        mouseTool.close(true); //关闭，并清除覆盖物
+        for (var i = 0; i < radios.length; i += 1) {
+            radios[i].checked = false;
+        }
+    };
+
+
+    function loadCube() {
+        var form = new FormData();
+        var f = document.getElementById('load_file');
+        form.append("filename", f.files[0].name);
+        $.ajax({
+            url: "/vizcube/load",
+            type: "POST",
+            data: form,
+            contentType: false,
+            processData: false,
+            success: function (data) {
+                alert(data);
+            },
+            error: function (data) {
+                console.log(data);
+                alert(data)
+            }
+        });
+    }
+
+    function buildCube() {
+        var progressbar = $("#progressbar"),
+            progressLabel = $(".progress-label");
+        var form = new FormData();
+        var f = document.getElementById('upload_file');
+        var d = [];
+        var t = [];
+        if (f.files.length === 0) {
+            alert("Select dimension first");
+            return
+        }
+        init();
+        for (let i = 0; i <= n; i++) {
+            var dId = "#dimension" + i;
+            var tId = "#type" + i;
+            var dSelected = $(dId + " option:selected").val();
+            var tSelected = $(tId + " option:selected").val();
+            d.push(dSelected);
+            t.push(tSelected);
+        }
+        form.append("file", f.files[0]);
+        $.ajax({
+            url: "/vizcube/upload",
+            type: "POST",
+            data: form,
+            contentType: false,
+            processData: false,
+            success: function (data) {
+                console.log(data);
+                $.ajax({
+                    url: "/vizcube/build",
+                    type: "POST",
+                    data: JSON.stringify({
+                        'name': f.files[0].name.split('.')[0],
+                        'dimensions': d,
+                        'types': t
+                    }),
+                    contentType: 'application/json',
+                    success: function (data) {
+                        progressLabel.text("完成！");
+                        setTimeout(complete, 1000);
+                    },
+                    error: function (data) {
+                        alert(data);
+                        console.log(data);
+                    }
+                });
+                setTimeout(progress, 1000);
+            },
+            error: function (data) {
+                alert(data);
+                console.log(data);
+            }
+        });
+
+        progressbar.progressbar({
+            value: false,
+            change: function () {
+                progressLabel.text(progressbar.progressbar("value") + "%");
+            },
+            complete: function () {
+                progressLabel.text("完成！");
+                setTimeout(complete, 1000);
+            }
+        });
+
+        function progress() {
+            var val = progressbar.progressbar("value") || 0;
+            $.ajax({
+                url: "/vizcube/build/status",
+                type: "GET",
+                dataType: 'json',
+                success: function (data) {
+                    progressbar.progressbar("value", data['value']);
+                }
+            });
+            if (val < 99) {
+                setTimeout(progress, 500);
+            }
+        }
+
+        function init() {
+            progressLabel.css('display', 'block');
+            progressbar.css('display', 'block');
+        }
+
+        function complete() {
+            progressLabel.css('display', 'none');
+            progressbar.css('display', 'none');
+        }
+    }
+
+    function queryCube() {
+        barChart.showLoading();
+        lineChart.showLoading();
+        $.ajax({
+            url: "/vizcube/query",
+            type: "GET",
+            data: {
+                "filter": "aaa"
+            },
+            contentType: "json",
+            success: function (data) {
+                console.log(data);
+                barChart.hideLoading();
+                lineChart.hideLoading();
+                barChart.setOption({
+                    xAxis: [{
+                        data: data['categorical'][0].x_data
+                    }, {
+                        data: data['categorical'][1].x_data
+                    }],
+                    series: [{
+                        // 根据名字对应到相应的系列
+                        name: 'link_id',
+                        data: data['categorical'][0].y_data
+                    }, {
+                        name: 'vehicle_id',
+                        data: data['categorical'][1].y_data
+                    }]
+                });
+                lineChart.setOption({
+                    xAxis: {
+                        data: data['temporal'].x_data
+                    },
+                    series: [{
+                        name: 'COUNT',
+                        data: data['temporal'].y_data
+                    }]
+                });
+                drawHeatmap(data['spatial']);
+            },
+            error: function (data) {
+                alert(data);
+                console.log(data);
+            }
+        });
+    }
+
+
+    function getDimensions() {
+        var f = document.getElementById('upload_file');
+        if (f.files[0] == null) {
+            return
+        }
+        var reader = new FileReader();
+        var dimensions = document.getElementById('dimensions');
+        var types = document.getElementById('types');
+        if (dimensions.childNodes.length > 3) {
+            while (dimensions.hasChildNodes()) {
+                if (dimensions.childNodes.length === 3)
+                    break;
+                dimensions.removeChild(dimensions.lastChild)
+            }
+            while (types.hasChildNodes()) {
+                if (types.childNodes.length === 3)
+                    break;
+                types.removeChild(types.lastChild)
+            }
+        }
+        if (D.length > 0) {
+            var dSelect = document.getElementById('dimension0');
+            var tSelect = document.getElementById('type0');
+            while (dSelect.hasChildNodes()) {
+                dSelect.removeChild(dSelect.firstChild);
+            }
+            while (tSelect.hasChildNodes()) {
+                tSelect.removeChild(tSelect.firstChild);
+            }
+            D = [];
+            n = 0
+        }
+        reader.readAsText(f.files[0], 'utf-8');
+        reader.onload = function (e) {
+            var header = e.target.result.split('\r\n')[0];
+            var dimensions = header.split(',');
+            console.log(dimensions);
+            D = dimensions;
+            for (let i = 0; i < D.length; i++) {
+                document.getElementById("dimension" + n).options.add(new Option(D[i], D[i]))
+            }
+            for (let i = 0; i < T.length; i++) {
+                document.getElementById("type" + n).options.add(new Option(T[i], T[i]))
+            }
+        };
+    }
+
+    function addOptions() {
+        if (D.length === 0)
+            return;
+        var dimensions = document.getElementById("dimensions");
+        var types = document.getElementById("types");
+        var dimensionSelect = document.createElement("select");
+        var typeSelect = document.createElement("select");
+        dimensionSelect.setAttribute("id", "dimension" + (++n));
+        for (let i = 0; i < D.length; i++) {
+            dimensionSelect.options.add(new Option(D[i], D[i]))
+        }
+        typeSelect.setAttribute("id", "type" + n);
+        for (let i = 0; i < T.length; i++) {
+            typeSelect.options.add(new Option(T[i], T[i]))
+        }
+        var li1 = document.createElement("li");
+        var li2 = document.createElement("li");
+        li1.appendChild(dimensionSelect);
+        li2.appendChild(typeSelect);
+        dimensions.appendChild(li1);
+        types.appendChild(li2);
+    }
+</script>
+</body>
+</html>
