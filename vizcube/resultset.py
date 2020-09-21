@@ -9,7 +9,6 @@ class ResultSet(object):
         self.y_intervals = []
         self.y_data = []
 
-
     def output(self):
         result = '"x_name":"' + self.x_name + '","y_name":"' + self.y_name + '","x_data":"' + str(
             self.x_data) + '","y_data":"' + str(self.y_data)
