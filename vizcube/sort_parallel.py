@@ -15,7 +15,7 @@ class Sort(object):
     def setDs(self, ds):
         self.ds = ds
 
-    def sort(self, begin, end, ds, dimension, dimensionType, pbar):
+    def sort(self, begin, end, ds, dimension, dimensionType, pbar=None):
         self.setBeginEnd(begin, end)
         self.setDs(ds)
         if dimensionType == Type.categorical:
@@ -31,3 +31,7 @@ class Sort(object):
             hashLength = 8
             d = SpatialDimension(self.R, hashLength)
             return d.bin(dimension, self.ds, self.begin, self.end, pbar)
+        elif dimensionType == Type.numerical:
+            bin_width = 20
+            d = NumericalDimension(self.R, bin_width)
+            return d.bin(dimension, ds, begin, end, pbar)

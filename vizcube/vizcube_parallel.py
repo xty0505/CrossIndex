@@ -1,6 +1,7 @@
 import os
 import time
 import operator
+import argparse
 from functools import reduce
 from collections import defaultdict
 
@@ -10,8 +11,6 @@ from tqdm import tqdm
 from query import Query, Condition
 from sort_parallel import Sort
 from type_parallel import *
-
-os.environ["MODIN_ENGIN"] = "ray"
 
 
 class VizCube(object):
@@ -65,7 +64,7 @@ class VizCube(object):
             line = f.readline().strip('\n')
             self.dimensions = list(line.strip('\n').split(','))
             line = f.readline().strip('\n')
-            self.types = list(line.strip('\n').split(','))
+            self.types = [int(x) for x in list(line.strip('\n').split(','))]
 
             for i in range(len(self.dimensions)):
                 self.dimensionSetLayers.append([])
@@ -179,20 +178,20 @@ class VizCube(object):
         self.pbar = tqdm(desc='VizCube Build Parallel', total=len(self.R) * len(self.dimensions))
         for i in range(len(self.dimensions)):
             dimension = self.dimensions[i]
-            dimensionType = self.types[i]
+            dimension_type = self.types[i]
             sort = Sort(self.R, 0, len(self.R) - 1)
             if i == 0:
                 root = DimensionSet('root', 'all', Interval(0, len(self.R) - 1))
-                result = sort.sort(0, len(self.R) - 1, root, dimension, dimensionType, self.pbar)
-                # self.R = result[1]
+                result = sort.sort(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
                 self.dimensionSetLayers.append(result)
             else:
                 result = Parallel(n_jobs=8, backend='threading')(
-                    delayed(sort.sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimensionType, self.pbar) for
+                    delayed(sort.sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
                     ds in self.dimensionSetLayers[i - 1])
                 layer = reduce(operator.add, result)
-                # self.R = pd.concat(result[1])
                 self.dimensionSetLayers.append(layer)
+            if dimension_type == Type.numerical:
+                self.R.drop(columns=[dimension + '_bin'], inplace=True)
         self.pbar.close()
         self.ready = True
         end = time.time()
@@ -288,22 +287,39 @@ class VizCube(object):
                         xyMap[ds.value].append(ds.interval)
         else:
             for i in range(len(self.dimensions)):
-                if n == 0:
-                    break
                 tmpDS = []
-                if query.wheres[i].value is None:
+                where = query.wheres[i]
+
+                # 当前 dimension 无where条件
+                if where.value is None:
                     for ds in validDSs:
                         for sub in ds.subSet:
                             tmpDS.append(sub)
                     validDSs = tmpDS
                     continue
-                where = query.wheres[i]
-                for ds in validDSs:
-                    for sub in ds.subSet:
-                        if where.match(sub.value):
-                            tmpDS.append(sub)
+
+                # numerical 可能会出现 condition 落在 bin_boundary 中间的情况
+                if self.types[i] == Type.numerical:
+                    for ds in validDSs:
+                        for sub in ds.subSet:
+                            is_match, new_sub = where.match(sub, self.R)
+                            if is_match:
+                                if new_sub is not None:
+                                    tmpDS.append(new_sub)
+                                else:
+                                    tmpDS.append(sub)
+                else:
+                    for ds in validDSs:
+                        for sub in ds.subSet:
+                            if where.match(sub):
+                                tmpDS.append(sub)
                 validDSs = tmpDS
+
+                # 当前 where 条件筛选完后如果没有后续条件直接break
                 n = n - 1
+                if n == 0:
+                    break
+
             # group by
             valid_dimension_i = self.dimensions.index(validDSs[0].dimension)
             groupby_i = self.dimensions.index(query.groupby)
@@ -355,7 +371,7 @@ class VizCube(object):
             elif new_i < old_i:
                 for ds in validDSs:
                     p = ds.find_parent(conditions[j].dimension)
-                    if p is not None and conditions[j].match(p.value):
+                    if p is not None and conditions[j].match(p):
                         tmpDS.append(ds)
                 validDSs = tmpDS
             # condition > groupby
@@ -368,7 +384,7 @@ class VizCube(object):
                     tmpDS = []
                 tmpDS = []
                 for ds in validDSs:
-                    if conditions[j].match(ds.value):
+                    if conditions[j].match(ds):
                         tmpDS.append(ds)
                 validDSs = tmpDS
             query.add_condition(conditions[j])
@@ -396,63 +412,92 @@ class VizCube(object):
         for ds in self.dimensionSetLayers[0]:
             ds.output()
 
-
-if __name__ == '__main__':
-    # traffic.csv
-    # vizcube = VizCube('traffic', './data/traffic.csv', ['link_id', 'time'], '\t')
-    # vizcube.build()
-    # vizcube.save()
-    # vizcube.load('traffic')
-    # vizcube.output()
-    # sql = "SELECT COUNT(vehicle_num) from traffic WHERE time = '651'  GROUP BY link_id"
-
-    # trace.csv
-    vizcube = VizCube('trace',
-                      [['lng', 'lat'], 'link_id', 'vehicle_id'],
-                      ['spatial', 'categorical', 'categorical'])
-    # vizcube.build2()
-    # vizcube.save()
-    vizcube.load('../cube/', 'trace')
-    sql = "SELECT COUNT(vehicle_length) from trace WHERE geohash='wtw3sm'  GROUP BY geohash"
-
-    # myshop.csv
-    # vizcube = VizCube('myshop_temporal', './data/websales_home_myshop.csv',
-    #                   ['category', 'itemname', 'gender', 'nationality', 'date'],
-    #                   ['categorical', 'categorical', 'categorical', 'categorical', 'temporal'],
-    #                   '\t')
-    # vizcube.build2()
-    # vizcube.save()
-    # vizcube.load('myshop_temporal')
-    # sql = "SELECT AVG(quantity) from myshop WHERE gender = '女' AND date BETWEEN '2019' and '2020' GROUP BY category"
-
-    q = Query(measure='', agg='', groupby='', cube=vizcube)
+def execute_direct_query(vizcube, sql):
+    q = Query(cube=vizcube)
     q.parse(sql)
 
-    sql1 = "SELECT COUNT(vehicle_length) from trace WHERE geohash='wtw3sm'  AND link_id IN ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00']  GROUP BY geohash"
-    q1 = Query(measure='', agg='', groupby='', cube=vizcube)
-    q1.parse(sql1)
-
-    # 直接query
     start = time.time()
-    vizcube.query(q1)
-    end = time.time()
-
-    q1.clear()
-    start1 = time.time()
-    vizcube.query2(q1)
-    end1 = time.time()
-
-    print('query time:' + str(end - start))
-    print('query2 time:' + str(end1 - start1))
-    q1.result.pretty_output()
-
-    # backward_query
     vizcube.query2(q)
-    # Condition('link_id', ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00'], Type.categorical),
-    condition = [Condition('link_id', ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00'], Type.categorical)]
-    start = time.time()
-    vizcube.backward_query(q, condition)
     end = time.time()
 
     q.result.pretty_output()
-    print('back_query: ' + str(end - start))
+    print('direct query time:' + str(end - start))
+
+def execute_backward_query(vizcube, sql, new_conditions):
+    q = Query(cube=vizcube)
+    q.parse(sql)
+
+    vizcube.query2(q)
+    start = time.time()
+    vizcube.backward_query(q, new_conditions)
+    end = time.time()
+
+    q.result.pretty_output()
+    print('backward query: ' + str(end - start))
+
+if __name__ == '__main__':
+    argparser = argparse.ArgumentParser(description='An index for accelerating interactive data exploration.')
+    argparser.add_argument('--input-dir', dest='input_dir', help='input csv file directory')
+    argparser.add_argument('--cube-dir', dest='cube_dir', help='cube file directory', default='cube/')
+    argparser.add_argument('--name', dest='name', help='cube file and csv file name')
+    # if dimension type is spatial, it should be like "lng,lat"
+    argparser.add_argument('--dimensions', dest='dimensions', nargs='+', type=str, help='dimensions need to be filtered')
+    argparser.add_argument('--types', dest='types', nargs='+', type=str, help='types of dimensions')
+
+    argparser.add_argument('--delimiter', dest='delimiter', help='delimiter of csv file', default=',')
+
+    args = vars(argparser.parse_args())
+
+    # combine dimension args if its tpye is spatial
+    for i in range(len(args['types'])):
+        if args['types'][i] == 'spatial':
+            args['dimensions'][i] = args['dimensions'][i].split(',')
+
+    # initialization
+    vizcube =VizCube(args['name'], args['dimensions'], args['types'])
+    if os.path.exists(args['cube_dir'] + args['name'] + '.cube'):
+        vizcube.load(args['cube_dir'], args['name'])
+    else:
+        vizcube.build_parallel(args['input_dir'], args['delimiter'])
+        vizcube.save(args['cube_dir'])
+
+    # todo numerical结果不准确
+    sql = "SELECT COUNT(vehicle_num) from traffic WHERE velocity_ave >= 4 AND velocity_ave < 8 AND vehicle_num >= 1 AND vehicle_num < 2 GROUP BY time"
+    query = Query(cube=vizcube)
+    query.parse(sql)
+    start = time.time()
+    vizcube.query2(query)
+    end = time.time()
+    query.result.pretty_output()
+    print('query time: ', str(end-start))
+
+
+
+
+
+''' 
+====EXPERIMENT ARGS====
+traffic_categorical.csv args:
+    --input-dir data/traffic.csv --name traffic_categorical --dimensions link_id vehicle_num velocity_ave time --types categorical categorical categorical categorical --delimiter \t
+    
+    
+traffic_numerical.csv args:
+    --input-dir data/traffic.csv --name traffic_numerical --dimensions link_id vehicle_num velocity_ave time --types categorical numerical numerical categorical --delimiter \t
+    sql = "SELECT COUNT(vehicle_num) from traffic WHERE velocity_ave >= 4 AND velocity_ave < 8 GROUP BY time"
+
+traffic.csv args:
+    --name traffic --dimensions link_id time --types categorical categorical --delimiter \t
+    sql = "SELECT COUNT(vehicle_num) from traffic WHERE time = '651'  GROUP BY link_id"
+
+trace.csv args:
+    --name trace --dimensions "lng,lat" link_id vehicle_id timestep --types spatial categorical categorical categorical
+    direct_sql = "SELECT COUNT(vehicle_length) from trace WHERE geohash='wtw3sm'  AND link_id IN ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00']  GROUP BY geohash"
+    backward_sql = "SELECT COUNT(vehicle_length) from trace WHERE geohash='wtw3sm'  GROUP BY geohash"
+    execute_direct_query(vizcube, direct_sql)
+    condition = [Condition('link_id', ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00'], Type.categorical)]
+    execute_backward_query(vizcube, backward_sql, condition)
+    
+myshop_temporal.csv args:
+    --name myshop_temporal --dimensions category itemname gender nationality date --types categorical categorical categorical categorical temporcal --delimiter \t
+    sql = "SELECT AVG(quantity) from myshop WHERE gender = '女' AND date BETWEEN '2019' and '2020' GROUP BY category"
+'''

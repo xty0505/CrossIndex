@@ -12,6 +12,7 @@ class Type(object):
     spatial = 0
     categorical = 1
     temporal = 2
+    numerical = 3
 
     @staticmethod
     def getType(s):
@@ -21,6 +22,8 @@ class Type(object):
             return Type.categorical
         elif s == 'temporal':
             return Type.temporal
+        elif s == 'numerical':
+            return Type.numerical
 
 
 class TemporalDimension(object):
@@ -60,13 +63,6 @@ class CategoricalDimension(object):
     def __init__(self, R):
         self.R = R
 
-    def bin_parallel(self, dimension, ds, begin, end, pbar):
-        r = self.R.iloc[begin: end + 1]
-        items = self.R[dimension].value_counts().sort_index().items()
-        layer = Parallel(n_jobs=8)(delayed(build_parallel)(item, dimension, ds) for item in items)
-        pbar.update(len(r))
-        return layer
-
     def bin(self, dimension, ds, begin, end, pbar):
         layer = []
         r = self.R.iloc[begin:end + 1]
@@ -103,11 +99,25 @@ class SpatialDimension(object):
         self.R.iloc[ds.interval.begin:ds.interval.end + 1, :] = r[:]
         return layer
 
+class NumericalDimension(object):
+    def __init__(self, R, bin_width):
+        self.R = R
+        self.bin_width = bin_width
 
-def build_parallel(item_tuple, dimension, parent):
-    index = item_tuple[0]
-    value = item_tuple[1]
-    sub = DimensionSet(dimension, index, Interval(value, value + 1), parent)
-    if parent is not None:
-        parent.subSet.append(sub)
-    return sub
+    def bin(self, dimension, ds, begin, end, pbar):
+        layer = []
+        bin_label = dimension + '_bin'
+        # 在R上进行分箱, 保证每个bin宽度相同
+        self.R[bin_label] = pd.cut(self.R[dimension], self.bin_width).tolist()
+        r = self.R.iloc[begin: end + 1]
+        r = r.sort_values(by=dimension)
+        r.set_index(pd.Index(range(begin, end + 1)), inplace=True)
+        for index, value in r[bin_label].value_counts().sort_index().items():
+            sub = DimensionSet(dimension, index, Interval(begin, begin + value - 1), ds)
+            begin = begin + value
+            ds.subSet.append(sub)
+            layer.append(sub)
+            pbar.update(sub.interval.count)
+        r.drop(columns=[bin_label], inplace=True)
+        self.R.iloc[ds.interval.begin:ds.interval.end + 1, :] = r[:]
+        return layer

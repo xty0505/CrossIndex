@@ -1,8 +1,10 @@
 import geohash2
 import pandas as pd
 
+from dimension import Interval
+from dimension import DimensionSet
 from resultset import ResultSet
-from type import Type
+from type_parallel import Type
 
 
 # where 条件
@@ -12,9 +14,13 @@ class Condition(object):
         self.value = value
         self.type = type
 
-    def match(self, value):
+    def match(self, ds, R=None):
+        value = ds.value
         condition = self.value if self.value.__class__ == list else [self.value]
+
         if self.type == Type.categorical:
+            if type(condition[0]) is float:
+                return condition[0] <= float(value) < condition[1]
             return value in condition
         elif self.type == Type.temporal:
             return condition[0] <= value <= condition[1]
@@ -23,6 +29,71 @@ class Condition(object):
                 return value.find(condition[0]) != -1
             elif len(value) == len((condition[0])):
                 return value == condition[0]
+        elif self.type == Type.numerical:
+            # bin_boundary: (x, y]
+            # condition: [x, y)
+            bin_boundary = [float(x.strip()) for x in value[1:-1].split(',')]
+            if bin_boundary[0] >= condition[1] or bin_boundary[1] < condition[0]:
+                return False, None
+            if bin_boundary[0] >= condition[0] and bin_boundary[1] < condition[1]:
+                return True, None
+            if bin_boundary[0] < condition[0] <= bin_boundary[1] < condition[1]:
+                r = R.iloc[ds.interval.begin:ds.interval.end + 1, :]
+                r = r[r[ds.dimension] >= condition[0]]
+                if len(r) == 0:
+                    return False, None
+                idx = r.index.tolist()
+                new_ds = DimensionSet(ds.dimension, '(' + str(condition[0]) + ',' + value.split(',')[1],
+                                      Interval(idx[0], idx[-1]), ds.parent)
+                new_ds.subSet = ds.subSet
+                self.adjust_subset(new_ds)
+                return True, new_ds
+            if condition[0] <= bin_boundary[0] < condition[1] <= bin_boundary[1]:
+                r = R.iloc[ds.interval.begin:ds.interval.end + 1, :]
+                r = r[r[ds.dimension] < condition[1]]
+                if len(r) == 0:
+                    return False, None
+                idx = r.index.tolist()
+                new_ds = DimensionSet(ds.dimension, value.split(',')[0] + ',' + str(condition[1]) + ')',
+                                      Interval(idx[0], idx[-1]), ds.parent)
+                new_ds.subSet = ds.subSet
+                self.adjust_subset(new_ds)
+                return True, new_ds
+            if bin_boundary[0] < condition[0] <= condition[1] <= bin_boundary[1]:
+                r = R.iloc[ds.interval.begin:ds.interval.end + 1, :]
+                r = r[(condition[0] <= r[ds.dimension]) & (r[ds.dimension] < condition[1])]
+                if len(r) == 0:
+                    return False, None
+                idx = r.index.tolist()
+                new_ds = DimensionSet(ds.dimension, '[' + str(condition[0]) + ',' + str(condition[1]) + ')',
+                                      Interval(idx[0], idx[-1]), ds.parent)
+                new_ds.subSet = ds.subSet
+                self.adjust_subset(new_ds)
+                return True, new_ds
+
+    def adjust_subset(self, ds):
+        new_subSet = []
+        for sub in ds.subSet:
+            # 原ds下的sub不再属于new_ds
+            if sub.interval.begin > ds.interval.end or sub.interval.end < ds.interval.begin:
+                continue
+
+            # 原ds下的部分sub属于new_ds, 调整相应sub的interval, 并递归调整sub的subSet
+            if sub.interval.begin < ds.interval.begin <= sub.interval.end <= ds.interval.end:
+                new_sub = DimensionSet(sub.dimension, sub.value, Interval(ds.interval.begin, sub.interval.end), ds)
+                new_sub.subSet = sub.subSet
+                self.adjust_subset(new_sub)
+            elif ds.interval.begin <= sub.interval.begin <= ds.interval.end < sub.interval.end:
+                new_sub = DimensionSet(sub.dimension, sub.value, Interval(sub.interval.begin, ds.interval.end), ds)
+                new_sub.subSet = sub.subSet
+                self.adjust_subset(new_sub)
+
+            # sub 正好属于new_ds, 无需调整
+            else:
+                new_sub = sub
+
+            new_subSet.append(new_sub)
+        ds.subSet = new_subSet
 
 
 aggregation = {'CNT': 'COUNT',
@@ -31,7 +102,7 @@ aggregation = {'CNT': 'COUNT',
 
 
 class Query(object):
-    def __init__(self, measure, agg, groupby, cube):
+    def __init__(self, measure='', agg='', groupby='', cube=None):
         self.measure = measure
         self.agg = agg
         self.groupby = groupby
@@ -68,8 +139,20 @@ class Query(object):
         if sql.find('WHERE') != -1:
             wheres = sql[sql.find('WHERE') + 6:sql.find('GROUP')].split('AND')
             for where in wheres:
+                # >= and <
+                if where.find('>=') != -1:
+                    dimension = where.split('>=')[0].strip().strip('(')
+                    value = where.split('>=')[1].strip().strip(')')
+                    condition = Condition(dimension, [float(value)], Type.numerical)
+                elif where.find('<') != -1:
+                    dimension = where.split('<')[0].strip().strip('(')
+                    value = where.split('<')[1].strip().strip(')')
+                    for w in self.wheres:
+                        if w.dimension == dimension:
+                            w.value.append(float(value))
+                            break
                 # =
-                if where.find('=') != -1:
+                elif where.find('=') != -1:
                     dimension = where.split('=')[0].strip()
                     value = where.split('=')[1].replace('\'', '').strip()
                     t = Type.categorical
@@ -87,6 +170,7 @@ class Query(object):
                     dimension = where.split('BETWEEN')[0].strip()
                     value = [s.strip() for s in where.split('BETWEEN')[1].replace('\'', '').split('and')]
                     condition = Condition(dimension, value, Type.temporal)
+
                 self.wheres[self.cube.dimensions.index(condition.dimension)] = condition
                 self.where_n = self.where_n + 1
 
