@@ -49,7 +49,7 @@ class TemporalDimension(object):
         r['temporalBin'] = r[dimension].apply(self.bin_by_granularity)
         r.set_index(pd.Index(range(begin, end + 1)), inplace=True)
         for index, value in r['temporalBin'].value_counts().sort_index().items():
-            sub = DimensionSet(dimension, index, Interval(begin, begin + value - 1), ds)
+            sub = DimensionSet(dimension, Type.temporal, index, Interval(begin, begin + value - 1), ds)
             begin = begin + value
             ds.subSet.append(sub)
             layer.append(sub)
@@ -60,20 +60,42 @@ class TemporalDimension(object):
 
 
 class CategoricalDimension(object):
-    def __init__(self, R):
+    def __init__(self, R, dimension, ds):
         self.R = R
+
+        dimension_to_sort = [dimension]
+        p = ds
+        while p is not None:
+            if p.type == Type.numerical:
+                dimension_to_sort.append(p.dimension)
+            p = p.parent
+        dimension_to_sort.reverse()
+        self.dimension_to_sort = dimension_to_sort
 
     def bin(self, dimension, ds, begin, end, pbar):
         layer = []
         r = self.R.iloc[begin:end + 1]
-        r = r.sort_values(by=dimension)
+        r = r.sort_values(by=self.dimension_to_sort)
         r.set_index(pd.Index(range(begin, end + 1)), inplace=True)
-        for index, value in r[dimension].value_counts().sort_index().items():
-            sub = DimensionSet(dimension, index, Interval(begin, begin + value - 1), ds)
-            begin = begin + value
-            ds.subSet.append(sub)
-            layer.append(sub)
-            pbar.update(sub.interval.count)
+
+        last_bin = list(r[dimension])[0]
+        value = 0
+        for bin_name in r[dimension]:
+            if last_bin != bin_name:
+                sub = DimensionSet(dimension, Type.numerical, last_bin, Interval(begin, begin + value - 1), ds)
+                begin = begin + value
+                ds.subSet.append(sub)
+                layer.append(sub)
+                pbar.update(value)
+                # reset
+                value = 0
+                last_bin = bin_name
+            value += 1
+        sub = DimensionSet(dimension, Type.numerical, str(last_bin), Interval(begin, begin + value - 1), ds)
+        ds.subSet.append(sub)
+        layer.append(sub)
+        pbar.update(value)
+
         self.R.iloc[ds.interval.begin:ds.interval.end + 1, :] = r[:]
         return layer
 
@@ -90,7 +112,7 @@ class SpatialDimension(object):
         r = r.sort_values(by='geohash')
         r.set_index(pd.Index(range(begin, end + 1)), inplace=True)
         for index, value in r['geohash'].value_counts().sort_index().items():
-            sub = DimensionSet('geohash', index, Interval(begin, begin + value - 1), ds)
+            sub = DimensionSet('geohash', Type.spatial, index, Interval(begin, begin + value - 1), ds)
             begin = begin + value
             ds.subSet.append(sub)
             layer.append(sub)
@@ -100,24 +122,46 @@ class SpatialDimension(object):
         return layer
 
 class NumericalDimension(object):
-    def __init__(self, R, bin_width):
+    def __init__(self, R, dimension, ds, bin_width):
         self.R = R
         self.bin_width = bin_width
 
+        dimension_to_sort = [dimension]
+        p = ds
+        while p is not None:
+            if p.type == Type.numerical:
+                dimension_to_sort.append(p.dimension)
+            p = p.parent
+        dimension_to_sort.reverse()
+        self.dimension_to_sort = dimension_to_sort
+
     def bin(self, dimension, ds, begin, end, pbar):
         layer = []
-        bin_label = dimension + '_bin'
-        # 在R上进行分箱, 保证每个bin宽度相同
-        self.R[bin_label] = pd.cut(self.R[dimension], self.bin_width).tolist()
+        bin_label = dimension+"_bin"
+
         r = self.R.iloc[begin: end + 1]
-        r = r.sort_values(by=dimension)
+        r = r.sort_values(by=self.dimension_to_sort)
         r.set_index(pd.Index(range(begin, end + 1)), inplace=True)
-        for index, value in r[bin_label].value_counts().sort_index().items():
-            sub = DimensionSet(dimension, index, Interval(begin, begin + value - 1), ds)
-            begin = begin + value
-            ds.subSet.append(sub)
-            layer.append(sub)
-            pbar.update(sub.interval.count)
-        r.drop(columns=[bin_label], inplace=True)
+
+        last_bin = list(r[bin_label])[0]
+        value = 0
+        for bin_name in r[bin_label]:
+            if last_bin.left != bin_name.left:
+                dimension_value = '(' + str(last_bin.left) + ', ' + str(last_bin.right) + ']'
+                sub = DimensionSet(dimension, Type.numerical, dimension_value, Interval(begin, begin + value - 1), ds)
+                begin = begin + value
+                ds.subSet.append(sub)
+                layer.append(sub)
+                pbar.update(value)
+                # reset
+                value = 0
+                last_bin = bin_name
+            value += 1
+        sub = DimensionSet(dimension, Type.numerical, str(last_bin), Interval(begin, begin + value - 1), ds)
+        ds.subSet.append(sub)
+        layer.append(sub)
+        pbar.update(value)
+
         self.R.iloc[ds.interval.begin:ds.interval.end + 1, :] = r[:]
+        # r.drop(columns=[bin_label], inplace=True)
         return layer

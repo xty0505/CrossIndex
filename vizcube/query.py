@@ -43,7 +43,7 @@ class Condition(object):
                 if len(r) == 0:
                     return False, None
                 idx = r.index.tolist()
-                new_ds = DimensionSet(ds.dimension, '(' + str(condition[0]) + ',' + value.split(',')[1],
+                new_ds = DimensionSet(ds.dimension, Type.numerical, '(' + str(condition[0]) + ',' + value.split(',')[1],
                                       Interval(idx[0], idx[-1]), ds.parent)
                 new_ds.subSet = ds.subSet
                 self.adjust_subset(new_ds)
@@ -54,7 +54,7 @@ class Condition(object):
                 if len(r) == 0:
                     return False, None
                 idx = r.index.tolist()
-                new_ds = DimensionSet(ds.dimension, value.split(',')[0] + ',' + str(condition[1]) + ')',
+                new_ds = DimensionSet(ds.dimension, Type.numerical, value.split(',')[0] + ',' + str(condition[1]) + ')',
                                       Interval(idx[0], idx[-1]), ds.parent)
                 new_ds.subSet = ds.subSet
                 self.adjust_subset(new_ds)
@@ -65,7 +65,7 @@ class Condition(object):
                 if len(r) == 0:
                     return False, None
                 idx = r.index.tolist()
-                new_ds = DimensionSet(ds.dimension, '[' + str(condition[0]) + ',' + str(condition[1]) + ')',
+                new_ds = DimensionSet(ds.dimension, Type.numerical, '[' + str(condition[0]) + ',' + str(condition[1]) + ')',
                                       Interval(idx[0], idx[-1]), ds.parent)
                 new_ds.subSet = ds.subSet
                 self.adjust_subset(new_ds)
@@ -80,11 +80,11 @@ class Condition(object):
 
             # 原ds下的部分sub属于new_ds, 调整相应sub的interval, 并递归调整sub的subSet
             if sub.interval.begin < ds.interval.begin <= sub.interval.end <= ds.interval.end:
-                new_sub = DimensionSet(sub.dimension, sub.value, Interval(ds.interval.begin, sub.interval.end), ds)
+                new_sub = DimensionSet(sub.dimension, sub.type, sub.value, Interval(ds.interval.begin, sub.interval.end), ds)
                 new_sub.subSet = sub.subSet
                 self.adjust_subset(new_sub)
             elif ds.interval.begin <= sub.interval.begin <= ds.interval.end < sub.interval.end:
-                new_sub = DimensionSet(sub.dimension, sub.value, Interval(sub.interval.begin, ds.interval.end), ds)
+                new_sub = DimensionSet(sub.dimension, sub.type, sub.value, Interval(sub.interval.begin, ds.interval.end), ds)
                 new_sub.subSet = sub.subSet
                 self.adjust_subset(new_sub)
 
@@ -124,16 +124,22 @@ class Query(object):
             self.wheres.append(c)
 
     def parse(self, sql):
-        # parse measure and agg
-        b = sql.find('(') + 1
-        e = sql.find(')')
-        if sql.find(aggregation.get('CNT')) != -1:
-            self.agg = aggregation.get('CNT')
-        elif sql.find(aggregation.get('AVG')) != -1:
-            self.agg = aggregation.get('AVG')
-        elif sql.find(aggregation.get('SUM')) != -1:
-            self.agg = aggregation.get('SUM')
-        self.measure = sql[b:e]
+        # projection
+        projection = sql[sql.find("SELECT") + 6: sql.find("FROM")].strip()
+        for column in projection.split(','):
+            column = column.strip()
+            if column.startswith("FLOOR"):
+                continue
+            # parse measure and agg
+            b = column.find('(') + 1
+            e = column.find(')')
+            if sql.find(aggregation.get('CNT')) != -1:
+                self.agg = aggregation.get('CNT')
+            elif sql.find(aggregation.get('AVG')) != -1:
+                self.agg = aggregation.get('AVG')
+            elif sql.find(aggregation.get('SUM')) != -1:
+                self.agg = aggregation.get('SUM')
+            self.measure = column[b:e]
 
         # parse where conditions
         if sql.find('WHERE') != -1:
@@ -150,6 +156,7 @@ class Query(object):
                     for w in self.wheres:
                         if w.dimension == dimension:
                             w.value.append(float(value))
+                            self.where_n -= 1
                             break
                 # =
                 elif where.find('=') != -1:
@@ -162,8 +169,8 @@ class Query(object):
                     condition = Condition(dimension, value, t)
                 # in
                 elif where.find('IN') != -1:
-                    dimension = where.split('IN')[0].strip()
-                    value = where.split('IN')[1].replace('\'', '').strip()[1:-1].replace(' ', '').split(',')
+                    dimension = where.split('IN')[0].strip()[1:]
+                    value = where.split('IN')[1].replace('\'', '').strip()[1:-2].replace(' ', '').split(',')
                     condition = Condition(dimension, value, Type.categorical)
                 # between
                 elif where.find('BETWEEN') != -1:
@@ -176,7 +183,10 @@ class Query(object):
 
         # parse group by
         if sql.find('GROUP') != -1:
-            self.groupby = sql[sql.find('GROUP BY') + 9:].strip()
+            groupby = sql[sql.find('GROUP BY') + 9:].strip()
+            if groupby.startswith('bin'):
+                groupby = groupby[4:]
+            self.groupby = groupby
         self.result = ResultSet(self.groupby, self.agg + '(' + self.measure + ')')
 
     def compute(self):

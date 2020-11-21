@@ -15,23 +15,23 @@ class Sort(object):
     def setDs(self, ds):
         self.ds = ds
 
-    def sort(self, begin, end, ds, dimension, dimensionType, pbar=None):
+    def sort(self, begin, end, ds, dimension, dimension_type, pbar=None):
         self.setBeginEnd(begin, end)
         self.setDs(ds)
-        if dimensionType == Type.categorical:
-            d = CategoricalDimension(self.R)
+        if dimension_type == Type.categorical:
+            d = CategoricalDimension(self.R, dimension, ds)
             return d.bin(dimension, self.ds, self.begin, self.end, pbar)
-        elif dimensionType == Type.temporal:
+        elif dimension_type == Type.temporal:
             by = 'YEAR'
             granularity = 1
             format = '%m/%d/%Y %H:%M:%S %p'
             d = TemporalDimension(self.R, by, granularity, format)
             return d.bin(dimension, self.ds, self.begin, self.end, pbar)
-        elif dimensionType == Type.spatial:
+        elif dimension_type == Type.spatial:
             hashLength = 8
             d = SpatialDimension(self.R, hashLength)
             return d.bin(dimension, self.ds, self.begin, self.end, pbar)
-        elif dimensionType == Type.numerical:
+        elif dimension_type == Type.numerical:
             bin_width = 20
-            d = NumericalDimension(self.R, bin_width)
+            d = NumericalDimension(self.R, dimension, ds, bin_width)
             return d.bin(dimension, ds, begin, end, pbar)

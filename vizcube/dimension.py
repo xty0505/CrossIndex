@@ -28,8 +28,9 @@ class Interval(object):
 
 
 class DimensionSet(object):
-    def __init__(self, dimension_name, dimension_value, interval, parent=None):
+    def __init__(self, dimension_name, dimension_type, dimension_value, interval, parent=None):
         self.dimension = dimension_name
+        self.type = dimension_type
         self.value = dimension_value
         self.interval = interval
         self.parent = parent
@@ -44,9 +45,10 @@ class DimensionSet(object):
     def save(self):
         return self.dimension + ';' + str(self.value) + ';' + self.interval.save()
 
-    def load(self, line):
+    def load(self, line, dimensions, types):
         args = line.split(';')
         self.dimension = args[0]
+        self.type = types[dimensions.index(self.dimension)]
         self.value = args[1]
         begin = int(args[2][1:-1].split(',')[0])
         end = int(args[2][1:-1].split(',')[1])

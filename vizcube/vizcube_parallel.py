@@ -65,6 +65,7 @@ class VizCube(object):
             self.dimensions = list(line.strip('\n').split(','))
             line = f.readline().strip('\n')
             self.types = [int(x) for x in list(line.strip('\n').split(','))]
+            # self.types = [Type.getType(x) for x in list(line.strip('\n').split(','))]
 
             for i in range(len(self.dimensions)):
                 self.dimensionSetLayers.append([])
@@ -72,8 +73,8 @@ class VizCube(object):
             last_l = 0
             while line:
                 l = line.count('>')
-                ds = DimensionSet('', '', None)
-                ds.load(line[l:])
+                ds = DimensionSet('', -1, '', None)
+                ds.load(line[l:], self.dimensions, self.types)
                 if last_l == l:
                     self.dimensionSetLayers[l].append(ds)
                     line = f.readline().strip('\n')
@@ -87,8 +88,8 @@ class VizCube(object):
         while line:
             l = line.count('>')
             if last_l == l:
-                ds = DimensionSet('', '', None, self.dimensionSetLayers[last_l - 1][-1])
-                ds.load(line[l:])
+                ds = DimensionSet('', -1, '', None, self.dimensionSetLayers[last_l - 1][-1])
+                ds.load(line[l:], self.dimensions, self.types)
                 self.dimensionSetLayers[l].append(ds)
                 subSet.append(ds)
                 line = f.readline().strip('\n')
@@ -100,94 +101,36 @@ class VizCube(object):
         self.dimensionSetLayers[last_l - 1][-1].subSet = subSet
         return last_l - 1, ''
 
-    def build(self):
-        # process bar
-        self.pbar = tqdm(desc='VizCube Build', total=len(self.R) * len(self.dimensions))
-
-        i = 0
-        # first dimension
-        dimension = self.dimensions[i]
-        dimensionType = self.types[i]
-        i = i + 1
-        begin = 0
-        firstLayer = []
-        self.R.sort_values(by=dimension, inplace=True)
-        self.R.reset_index(drop=True, inplace=True)
-        for index, value in self.R[dimension].value_counts().sort_index().items():
-            ds = DimensionSet(dimension, index, Interval(begin, begin + value - 1))
-            begin = begin + value
-            firstLayer.append(ds)
-            self.pbar.update(ds.interval.count)
-        self.dimensionSetLayers.append(firstLayer)
-
-        # other dimensions
-        while i < len(self.dimensions):
-            layer = []
-            for dS in self.dimensionSetLayers[i - 1]:
-                dimension = self.dimensions[i]
-                dimensionType = self.types[i]
-                begin = dS.interval.begin
-                end = dS.interval.end
-                partialRelation = self.R.iloc[begin:end + 1]
-                partialRelation = partialRelation.sort_values(by=dimension)
-                partialRelation.set_index(pd.Index(range(begin, end + 1)), inplace=True)
-                for index, value in partialRelation[dimension].value_counts().sort_index().items():
-                    ds = DimensionSet(dimension, str(index), Interval(begin, begin + value - 1))
-                    begin = begin + value
-                    dS.subSet.append(ds)
-                    layer.append(ds)
-                    self.pbar.update(ds.interval.count)
-                self.R.iloc[dS.interval.begin:dS.interval.end + 1, :] = partialRelation[:]
-            i = i + 1
-            self.dimensionSetLayers.append(layer)
-        self.pbar.close()
-
-    def build2(self, path, delimiter):
-        start = time.time()
-
-        self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
-        print('pd.read_csv finished.')
-        # process bar
-        self.pbar = tqdm(desc='VizCube Build', total=len(self.R) * len(self.dimensions))
-        for i in range(len(self.dimensions)):
-            dimension = self.dimensions[i]
-            dimensionType = self.types[i]
-            sort = Sort(self.R, 0, -1)
-            layer = []
-            if i == 0:
-                layer = sort.sort(dimension, dimensionType, self.pbar)
-                self.dimensionSetLayers.append(layer)
-            else:
-                for ds in self.dimensionSetLayers[i - 1]:
-                    begin = ds.interval.begin
-                    end = ds.interval.end
-                    sort.setBeginEnd(begin, end)
-                    sort.setDs(ds)
-                    layer = layer + sort.sort(dimension, dimensionType, self.pbar)
-                self.dimensionSetLayers.append(layer)
-        self.pbar.close()
-        self.ready = True
-        end = time.time()
-        print('build time:' + str(end - start))
-
     def build_parallel(self, path, delimiter):
         start = time.time()
         self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
         print('pd.read_csv finished.')
+
+        # bin numerical
+        for i in range(len(self.dimensions)):
+            if self.types[i] == Type.numerical:
+                bin_label = self.dimensions[i] + '_bin'
+                bin_width = 20
+                self.R[bin_label] = pd.cut(self.R[self.dimensions[i]], bin_width).tolist()
+
         # process bar
         self.pbar = tqdm(desc='VizCube Build Parallel', total=len(self.R) * len(self.dimensions))
         for i in range(len(self.dimensions)):
             dimension = self.dimensions[i]
             dimension_type = self.types[i]
             sort = Sort(self.R, 0, len(self.R) - 1)
+
             if i == 0:
-                root = DimensionSet('root', 'all', Interval(0, len(self.R) - 1))
+                root = DimensionSet('root', dimension_type, 'all', Interval(0, len(self.R) - 1))
                 result = sort.sort(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
                 self.dimensionSetLayers.append(result)
             else:
                 result = Parallel(n_jobs=8, backend='threading')(
                     delayed(sort.sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
                     ds in self.dimensionSetLayers[i - 1])
+                # result = []
+                # for ds in self.dimensionSetLayers[i - 1]:
+                #     result.append(sort.sort(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar))
                 layer = reduce(operator.add, result)
                 self.dimensionSetLayers.append(layer)
             if dimension_type == Type.numerical:
@@ -200,7 +143,7 @@ class VizCube(object):
     def query(self, query):
         # 记录当前循环中符合之前 where 条件即有效的 DimensionSet
         validDSs = []
-        root = DimensionSet('root', 'all', None)
+        root = DimensionSet('root', -1, 'all', None)
         root.subSet = self.dimensionSetLayers[0]
         validDSs.append(root)
         xyMap = defaultdict(lambda: [])
@@ -274,7 +217,7 @@ class VizCube(object):
     def query2(self, query):
         # 记录当前循环中符合之前 where 条件即有效的 DimensionSet
         validDSs = []
-        root = DimensionSet('root', 'all', None)
+        root = DimensionSet('root', -1, 'all', None)
         root.subSet = self.dimensionSetLayers[0]
         validDSs.append(root)
         xyMap = defaultdict(lambda: [])
@@ -293,8 +236,7 @@ class VizCube(object):
                 # 当前 dimension 无where条件
                 if where.value is None:
                     for ds in validDSs:
-                        for sub in ds.subSet:
-                            tmpDS.append(sub)
+                        tmpDS.extend(ds.subSet)
                     validDSs = tmpDS
                     continue
 
@@ -335,8 +277,7 @@ class VizCube(object):
                 while validDSs[0].dimension != query.groupby:
                     tmpDS = []
                     for ds in validDSs:
-                        for sub in ds.subSet:
-                            tmpDS.append(sub)
+                        tmpDS.extend(ds.subSet)
                     validDSs = tmpDS
                 for ds in validDSs:
                     xyMap[ds.value].append(ds.interval)
@@ -412,6 +353,17 @@ class VizCube(object):
         for ds in self.dimensionSetLayers[0]:
             ds.output()
 
+    def execute_query(self, sql):
+        q = Query(cube=vizcube)
+        q.parse(sql)
+
+        start = time.time()
+        vizcube.query2(q)
+        end = time.time()
+
+        q.result.pretty_output()
+        print('direct query time:' + str(end - start))
+
 def execute_direct_query(vizcube, sql):
     q = Query(cube=vizcube)
     q.parse(sql)
@@ -461,22 +413,17 @@ if __name__ == '__main__':
         vizcube.build_parallel(args['input_dir'], args['delimiter'])
         vizcube.save(args['cube_dir'])
 
-    # todo numerical结果不准确
-    sql = "SELECT COUNT(vehicle_num) from traffic WHERE velocity_ave >= 4 AND velocity_ave < 8 AND vehicle_num >= 1 AND vehicle_num < 2 GROUP BY time"
-    query = Query(cube=vizcube)
-    query.parse(sql)
-    start = time.time()
-    vizcube.query2(query)
-    end = time.time()
-    query.result.pretty_output()
-    print('query time: ', str(end-start))
-
+    sql = "SELECT COUNT(vehicle_num) from traffic WHERE velocity_ave >= 4 AND velocity_ave < 8 GROUP BY link_id"
+    execute_direct_query(vizcube, sql)
 
 
 
 
 ''' 
 ====EXPERIMENT ARGS====
+flights_1M.csv args:
+    --input-dir data/dataset_flights_1M.csv --name flights_1M --dimensions AIR_TIME ARR_DELAY ARR_TIME DEP_DELAY DEP_TIME DISTANCE --types categorical categorical categorical categorical categorical categorical
+
 traffic_categorical.csv args:
     --input-dir data/traffic.csv --name traffic_categorical --dimensions link_id vehicle_num velocity_ave time --types categorical categorical categorical categorical --delimiter \t
     
@@ -491,13 +438,15 @@ traffic.csv args:
 
 trace.csv args:
     --name trace --dimensions "lng,lat" link_id vehicle_id timestep --types spatial categorical categorical categorical
-    direct_sql = "SELECT COUNT(vehicle_length) from trace WHERE geohash='wtw3sm'  AND link_id IN ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00']  GROUP BY geohash"
-    backward_sql = "SELECT COUNT(vehicle_length) from trace WHERE geohash='wtw3sm'  GROUP BY geohash"
+    direct_sql = "SELECT COUNT(vehicle_length) from trace WHERE geohash='wtw3sm'  AND link_id IN ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00'] AND timestep >= 39654.4 AND timestep < 39800.4 GROUP BY geohash"
+    backward_sql = "SELECT COUNT(vehicle_length) from trace WHERE geohash='wtw3sm' AND timestep >= 39654.4 AND timestep < 39800.4 GROUP BY geohash"
     execute_direct_query(vizcube, direct_sql)
-    condition = [Condition('link_id', ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00'], Type.categorical)]
-    execute_backward_query(vizcube, backward_sql, condition)
+    execute_backward_query(vizcube, backward_sql,[Condition('link_id', ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00'], Type.categorical)])
     
 myshop_temporal.csv args:
     --name myshop_temporal --dimensions category itemname gender nationality date --types categorical categorical categorical categorical temporcal --delimiter \t
     sql = "SELECT AVG(quantity) from myshop WHERE gender = '女' AND date BETWEEN '2019' and '2020' GROUP BY category"
+    
+bike.csv args:
+    
 '''

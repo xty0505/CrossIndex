@@ -4,7 +4,7 @@ from flask import Flask, Blueprint, g, request, flash, redirect, json, render_te
 
 from query import Query, Condition
 from resultset import ResultSet
-from vizcube import VizCube, Type
+from vizcube_parallel import VizCube, Type
 
 cube = VizCube('')
 UPLOAD_PATH = './data'
