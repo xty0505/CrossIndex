@@ -114,6 +114,7 @@ class Query(object):
             c = Condition(dimension=d)
             self.wheres.append(c)
         self.validDSs = []
+        self.validDimensionSetLayers = []
 
     def set_cube(self, cube):
         self.cube = cube
@@ -142,6 +143,22 @@ class Query(object):
             self.measure = column[b:e]
 
         # parse where conditions
+        conditions = self.parse_conditions(sql)
+        for c in conditions:
+            self.wheres[self.cube.dimensions.index(c.dimension)] = c
+        self.where_n = len(conditions)
+
+        # parse group by
+        if sql.find('GROUP') != -1:
+            groupby = sql[sql.find('GROUP BY') + 9:].strip()
+            if groupby.startswith('bin'):
+                groupby = groupby[4:]
+            self.groupby = groupby
+        self.result = ResultSet(self.groupby, self.agg + '(' + self.measure + ')')
+
+    def parse_conditions(self, sql):
+        # parse where conditions
+        conditions = []
         if sql.find('WHERE') != -1:
             wheres = sql[sql.find('WHERE') + 6:sql.find('GROUP')].split('AND')
             for where in wheres:
@@ -149,14 +166,14 @@ class Query(object):
                 if where.find('>=') != -1:
                     dimension = where.split('>=')[0].strip().strip('(')
                     value = where.split('>=')[1].strip().strip(')')
-                    condition = Condition(dimension, [float(value)], Type.numerical)
+                    d_type = self.cube.types[self.cube.dimensions.index(dimension)]
+                    condition = Condition(dimension, [float(value)], d_type)
                 elif where.find('<') != -1:
                     dimension = where.split('<')[0].strip().strip('(')
                     value = where.split('<')[1].strip().strip(')')
-                    for w in self.wheres:
+                    for w in conditions:
                         if w.dimension == dimension:
                             w.value.append(float(value))
-                            self.where_n -= 1
                             break
                 # =
                 elif where.find('=') != -1:
@@ -174,20 +191,12 @@ class Query(object):
                     condition = Condition(dimension, value, Type.categorical)
                 # between
                 elif where.find('BETWEEN') != -1:
-                    dimension = where.split('BETWEEN')[0].strip()
+                    dimension = where.split('BETWEEN')[0].strip()[1:]
                     value = [s.strip() for s in where.split('BETWEEN')[1].replace('\'', '').split('and')]
                     condition = Condition(dimension, value, Type.temporal)
 
-                self.wheres[self.cube.dimensions.index(condition.dimension)] = condition
-                self.where_n = self.where_n + 1
-
-        # parse group by
-        if sql.find('GROUP') != -1:
-            groupby = sql[sql.find('GROUP BY') + 9:].strip()
-            if groupby.startswith('bin'):
-                groupby = groupby[4:]
-            self.groupby = groupby
-        self.result = ResultSet(self.groupby, self.agg + '(' + self.measure + ')')
+                conditions.append(condition)
+        return list(set(conditions))
 
     def compute(self):
         if self.agg == aggregation.get('CNT'):
@@ -264,12 +273,68 @@ class Query(object):
             self.where_n = self.where_n + 1
         self.wheres[index] = condition
 
+    def calculate_dimensionSetLayers(self):
+        valid_idx = self.cube.dimensions.index(self.validDSs[0].dimension)
+        idx = 0
+        while valid_idx > idx:
+            tmp = []
+            for ds in self.validDSs:
+                p = ds.find_parent(self.cube.dimensions[idx])
+                if p is not None:
+                    tmp.append(p)
+                    self.validDimensionSetLayers.append(list(set(tmp)))
+            idx += 1
+        # valid_idx == idx
+        self.validDimensionSetLayers.append(self.validDSs)
+        idx += 1
+        # valid_idx < idx
+        DSs_tmp = self.validDSs
+        while idx < len(self.cube.dimensions):
+            tmp = []
+            for ds in DSs_tmp:
+                tmp.extend(ds.subSet)
+                self.validDimensionSetLayers.append(tmp)
+                DSs_tmp = tmp
+            idx += 1
+
     def clear_conditions(self):
         self.wheres = []
         for d in self.cube.dimensions:
             c = Condition(dimension=d)
             self.wheres.append(c)
         self.where_n = 0
+
+    def is_backward_query(self, sql):
+        if self.where_n == 0:
+            return False
+        conditions = self.parse_conditions(sql)
+        for c in conditions:
+            old_condition = self.wheres[self.cube.dimensions.index(c.dimension)]
+            if old_condition.value is None:
+                continue
+
+            # compare whether can backward query
+            if old_condition.type == Type.categorical:
+                if type(old_condition.value[0]) is float:
+                    if c.value[0] < old_condition.value[0] or c.value[1] > old_condition.value[1]:
+                        return False
+                else:
+                    for v in c.value:
+                        if not v in old_condition.value:
+                            return False
+            elif old_condition.type == Type.temporal:
+                if c.value[0] < old_condition.value[0] or c.value[1] > old_condition.value[1]:
+                    return False
+            elif old_condition.type == Type.spatial:
+                if len(c.value) < len(old_condition.value):
+                    return False
+                elif len(c.value) > len(old_condition.value):
+                    if old_condition.value.find(c.value) == -1:
+                        return False
+            elif old_condition.type == Type.numerical:
+                if c.value[0] < old_condition.value[0] or c.value[1] > old_condition.value[1]:
+                    return False
+        return True
 
     def clear(self):
         self.result = ResultSet(self.groupby, self.agg + '(' + self.measure + ')')

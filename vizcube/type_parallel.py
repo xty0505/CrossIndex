@@ -82,7 +82,7 @@ class CategoricalDimension(object):
         value = 0
         for bin_name in r[dimension]:
             if last_bin != bin_name:
-                sub = DimensionSet(dimension, Type.numerical, last_bin, Interval(begin, begin + value - 1), ds)
+                sub = DimensionSet(dimension, Type.categorical, str(last_bin), Interval(begin, begin + value - 1), ds)
                 begin = begin + value
                 ds.subSet.append(sub)
                 layer.append(sub)
@@ -91,7 +91,7 @@ class CategoricalDimension(object):
                 value = 0
                 last_bin = bin_name
             value += 1
-        sub = DimensionSet(dimension, Type.numerical, str(last_bin), Interval(begin, begin + value - 1), ds)
+        sub = DimensionSet(dimension, Type.categorical, str(last_bin), Interval(begin, begin + value - 1), ds)
         ds.subSet.append(sub)
         layer.append(sub)
         pbar.update(value)
