@@ -125,15 +125,9 @@ class VizCube(object):
                 result = sort.sort(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
                 self.dimensionSetLayers.append(result)
             else:
-<<<<<<< HEAD
                 #result = Parallel(n_jobs=12, backend='threading')(
                 #    delayed(sort.sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
                 #    ds in self.dimensionSetLayers[i - 1])
-=======
-                # result = Parallel(n_jobs=8, backend='threading')(
-                #     delayed(sort.sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
-                #     ds in self.dimensionSetLayers[i - 1])
->>>>>>> 136f7fbb077e88a89c7a7bde84e8eabe024db5ab
                 result = []
                 for ds in self.dimensionSetLayers[i - 1]:
                     result.append(sort.sort(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar))
@@ -402,16 +396,11 @@ if __name__ == '__main__':
         vizcube.build_parallel(args['input_dir'], args['delimiter'])
         vizcube.save(args['cube_dir'])
 
-<<<<<<< HEAD
-    #sql = "SELECT COUNT(vehicle_num) from traffic WHERE velocity_ave >= 4 AND velocity_ave < 8 GROUP BY link_id"
-    #execute_direct_query(vizcube, sql)
-=======
     sql = "SELECT FLOOR(ARR_TIME/1) AS bin_ARR_TIME,  COUNT(*) as count FROM flights WHERE (AIR_TIME >= 120 AND AIR_TIME < 500) GROUP BY bin_ARR_TIME"
     # execute_direct_query(vizcube, sql)
     q = execute_backward_query(vizcube, sql, [Condition('AIR_TIME', [float(150), float(500)], Type.categorical), Condition("DISTANCE", [float(0), float(1000)], Type.categorical)])
     print(q.result.convert_to_filters())
     print(q.result.convert_to_filters_IN())
->>>>>>> 136f7fbb077e88a89c7a7bde84e8eabe024db5ab
 
 
 
