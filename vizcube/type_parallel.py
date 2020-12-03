@@ -78,11 +78,12 @@ class CategoricalDimension(object):
         r = r.sort_values(by=self.dimension_to_sort)
         r.set_index(pd.Index(range(begin, end + 1)), inplace=True)
 
+        print("[%s,%s]: %s" % (begin, end, list(r[dimension])))
         last_bin = list(r[dimension])[0]
         value = 0
         for bin_name in r[dimension]:
             if last_bin != bin_name:
-                sub = DimensionSet(dimension, Type.numerical, last_bin, Interval(begin, begin + value - 1), ds)
+                sub = DimensionSet(dimension, Type.categorical, str(last_bin), Interval(begin, begin + value - 1), ds)
                 begin = begin + value
                 ds.subSet.append(sub)
                 layer.append(sub)
@@ -91,7 +92,7 @@ class CategoricalDimension(object):
                 value = 0
                 last_bin = bin_name
             value += 1
-        sub = DimensionSet(dimension, Type.numerical, str(last_bin), Interval(begin, begin + value - 1), ds)
+        sub = DimensionSet(dimension, Type.categorical, str(last_bin), Interval(begin, begin + value - 1), ds)
         ds.subSet.append(sub)
         layer.append(sub)
         pbar.update(value)

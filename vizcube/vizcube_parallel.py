@@ -121,16 +121,16 @@ class VizCube(object):
             sort = Sort(self.R, 0, len(self.R) - 1)
 
             if i == 0:
-                root = DimensionSet('root', dimension_type, 'all', Interval(0, len(self.R) - 1))
+                root = DimensionSet('root', -1, 'all', Interval(0, len(self.R) - 1))
                 result = sort.sort(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
                 self.dimensionSetLayers.append(result)
             else:
-                result = Parallel(n_jobs=8, backend='threading')(
-                    delayed(sort.sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
-                    ds in self.dimensionSetLayers[i - 1])
-                # result = []
-                # for ds in self.dimensionSetLayers[i - 1]:
-                #     result.append(sort.sort(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar))
+                #result = Parallel(n_jobs=12, backend='threading')(
+                #    delayed(sort.sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
+                #    ds in self.dimensionSetLayers[i - 1])
+                result = []
+                for ds in self.dimensionSetLayers[i - 1]:
+                    result.append(sort.sort(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar))
                 layer = reduce(operator.add, result)
                 self.dimensionSetLayers.append(layer)
             if dimension_type == Type.numerical:
@@ -413,8 +413,8 @@ if __name__ == '__main__':
         vizcube.build_parallel(args['input_dir'], args['delimiter'])
         vizcube.save(args['cube_dir'])
 
-    sql = "SELECT COUNT(vehicle_num) from traffic WHERE velocity_ave >= 4 AND velocity_ave < 8 GROUP BY link_id"
-    execute_direct_query(vizcube, sql)
+    #sql = "SELECT COUNT(vehicle_num) from traffic WHERE velocity_ave >= 4 AND velocity_ave < 8 GROUP BY link_id"
+    #execute_direct_query(vizcube, sql)
 
 
 
