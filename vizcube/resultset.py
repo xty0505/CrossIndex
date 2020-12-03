@@ -9,6 +9,23 @@ class ResultSet(object):
         self.y_intervals = []
         self.y_data = []
 
+    def convert_to_filters(self):
+        res = []
+        for intervals in self.y_intervals:
+            for interval in intervals:
+                filt = "%s <= id <= %s" % (str(interval.begin), str(interval.end))
+                res.append(filt)
+        return " AND ".join(res)
+
+    def convert_to_filters_IN(self):
+        res = []
+        for intervals in self.y_intervals:
+            for interval in intervals:
+                for i in range(interval.begin, interval.end
+                                + 1):
+                    res.append(i)
+        return res
+
     def to_dict(self):
         result = {}
         for i in range(len(self.x_data)):

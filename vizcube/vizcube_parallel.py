@@ -125,9 +125,15 @@ class VizCube(object):
                 result = sort.sort(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
                 self.dimensionSetLayers.append(result)
             else:
+<<<<<<< HEAD
                 #result = Parallel(n_jobs=12, backend='threading')(
                 #    delayed(sort.sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
                 #    ds in self.dimensionSetLayers[i - 1])
+=======
+                # result = Parallel(n_jobs=8, backend='threading')(
+                #     delayed(sort.sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
+                #     ds in self.dimensionSetLayers[i - 1])
+>>>>>>> 136f7fbb077e88a89c7a7bde84e8eabe024db5ab
                 result = []
                 for ds in self.dimensionSetLayers[i - 1]:
                     result.append(sort.sort(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar))
@@ -141,80 +147,6 @@ class VizCube(object):
         print('build time:' + str(end - start))
 
     def query(self, query):
-        # 记录当前循环中符合之前 where 条件即有效的 DimensionSet
-        validDSs = []
-        root = DimensionSet('root', -1, 'all', None)
-        root.subSet = self.dimensionSetLayers[0]
-        validDSs.append(root)
-        xyMap = defaultdict(lambda: [])
-        n = query.where_n
-        # no wheres
-        if n == 0:
-            for i in range(len(self.dimensions)):
-                if self.dimensions[i] == query.groupby:
-                    for ds in self.dimensionSetLayers[i]:
-                        xyMap[ds.value].append(ds.interval)
-        else:
-            for i in range(len(self.dimensions)):
-                if n == 0:
-                    break
-                tmpDS = []
-                if query.wheres[i].value is None:
-                    if self.dimensions[i] == query.groupby:
-                        for ds in validDSs:
-                            for sub in ds.subSet:
-                                tmpDS.append(sub)
-                                xyMap[sub.value].append(sub.interval)
-                    else:
-                        for ds in validDSs:
-                            for sub in ds.subSet:
-                                tmpDS.append(sub)
-                    validDSs = tmpDS
-                    continue
-                where = query.wheres[i]
-                for ds in validDSs:
-                    for sub in ds.subSet:
-                        if where.match(sub.value):
-                            tmpDS.append(sub)
-                # 该 where 条件限定的列刚好是 group by 的列
-                if self.dimensions[i] == query.groupby:
-                    for ds in tmpDS:
-                        xyMap[ds.value].append(ds.interval)
-                # group by 的列已经遇到
-                elif len(xyMap) > 0:
-                    tmpMap = defaultdict(lambda: [])
-                    groupby_validDSs = defaultdict(lambda: [])
-                    for ds in validDSs:
-                        for sub in ds.subSet:
-                            if where.match(sub.value):
-                                p = sub.find_parent(query.groupby)
-                                if p is not None:
-                                    groupby_validDSs[p.value].append(sub.interval)
-                    for key in xyMap.keys():
-                        if len(groupby_validDSs[key]) != 0:
-                            tmpMap[key] = groupby_validDSs[key]
-                        xyMap = tmpMap
-                validDSs = tmpDS
-                n = n - 1
-            # n = 0 break循环后, 如果 groupby列没有遇到
-            if len(xyMap) == 0:
-                while validDSs[0].dimension != query.groupby:
-                    tmpDS = []
-                    for ds in validDSs:
-                        for sub in ds.subSet:
-                            tmpDS.append(sub)
-                    validDSs = tmpDS
-                for ds in validDSs:
-                    xyMap[ds.value].append(ds.interval)
-
-        query.validDSs = validDSs
-        for key in sorted(xyMap.keys()):
-            query.result.x_data.append(key)
-            query.result.y_intervals.append(xyMap[key])
-        query.compute()
-        return query.result.output_xy()
-
-    def query2(self, query):
         # 记录当前循环中符合之前 where 条件即有效的 DimensionSet
         validDSs = []
         root = DimensionSet('root', -1, 'all', None)
@@ -262,6 +194,9 @@ class VizCube(object):
                 if n == 0:
                     break
 
+            if len(validDSs) == 0:
+                return query.result.output_xy()
+
             # group by
             valid_dimension_i = self.dimensions.index(validDSs[0].dimension)
             groupby_i = self.dimensions.index(query.groupby)
@@ -293,6 +228,8 @@ class VizCube(object):
         j = 0
         xyMap = defaultdict(lambda: [])
         validDSs = query.validDSs
+        if len(validDSs) == 0:
+            return query.result.output_xy()
         for i in range(len(self.dimensions)):
             if j >= len(conditions):
                 break
@@ -305,7 +242,7 @@ class VizCube(object):
             # condition 列和 groupby 列为同一列
             if new_i == old_i:
                 for ds in validDSs:
-                    if conditions[j].match(ds.value):
+                    if conditions[j].match(ds):
                         tmpDS.append(ds)
                 validDSs = tmpDS
             # condition 列 < groupby 列
@@ -319,8 +256,7 @@ class VizCube(object):
             elif new_i > old_i:
                 while validDSs[0].dimension != conditions[j].dimension:
                     for ds in validDSs:
-                        for sub in ds.subSet:
-                            tmpDS.append(sub)
+                        tmpDS.extend(ds.subSet)
                     validDSs = tmpDS
                     tmpDS = []
                 tmpDS = []
@@ -329,7 +265,9 @@ class VizCube(object):
                         tmpDS.append(ds)
                 validDSs = tmpDS
             query.add_condition(conditions[j])
-            # 最外层循环
+
+            if len(validDSs) == 0:
+                return query.result.output_xy()
             j = j + 1
 
         # group by
@@ -349,6 +287,55 @@ class VizCube(object):
         query.compute()
         return query.result.output_xy()
 
+    def backward_query2(self, query, conditions):
+        validDSs = []
+        xyMap = defaultdict(lambda: [])
+
+        for i in len(conditions):
+            tmp = []
+
+            condition = conditions[i]
+            next_condition = conditions[i+1] if (i+1) < len(conditions) else None
+
+            idx = self.dimensions.index(condition.dimension)
+            for ds in query.validDimensionSetLayers[idx]:
+                if condition.match(ds):
+                    validDSs.append(ds)
+            if next_condition is not None:
+                while validDSs[0].dimension != next_condition.dimension:
+                    for ds in validDSs:
+                        tmp.extend(ds.subSet)
+                    validDSs = tmp
+
+        if len(validDSs) == 0:
+            return query.result.output_xy()
+        # group by
+        valid_dimension_i = self.dimensions.index(validDSs[0].dimension)
+        groupby_i = self.dimensions.index(query.groupby)
+        if valid_dimension_i == groupby_i:
+            for ds in validDSs:
+                xyMap[ds.value].append(ds.interval)
+        elif valid_dimension_i > groupby_i:
+            for ds in validDSs:
+                p = ds.find_parent(query.groupby)
+                if p is not None:
+                    xyMap[p.value].append(ds.interval)
+        else:
+            while validDSs[0].dimension != query.groupby:
+                tmpDS = []
+                for ds in validDSs:
+                    tmpDS.extend(ds.subSet)
+                validDSs = tmpDS
+            for ds in validDSs:
+                xyMap[ds.value].append(ds.interval)
+
+        query.validDSs = validDSs
+        for key in sorted(xyMap.keys()):
+            query.result.x_data.append(key)
+            query.result.y_intervals.append(xyMap[key])
+        query.compute()
+        return query.result.output_xy()
+
     def output(self):
         for ds in self.dimensionSetLayers[0]:
             ds.output()
@@ -358,7 +345,7 @@ class VizCube(object):
         q.parse(sql)
 
         start = time.time()
-        vizcube.query2(q)
+        vizcube.query(q)
         end = time.time()
 
         q.result.pretty_output()
@@ -369,7 +356,7 @@ def execute_direct_query(vizcube, sql):
     q.parse(sql)
 
     start = time.time()
-    vizcube.query2(q)
+    vizcube.query(q)
     end = time.time()
 
     q.result.pretty_output()
@@ -379,13 +366,15 @@ def execute_backward_query(vizcube, sql, new_conditions):
     q = Query(cube=vizcube)
     q.parse(sql)
 
-    vizcube.query2(q)
+    vizcube.query(q)
     start = time.time()
     vizcube.backward_query(q, new_conditions)
     end = time.time()
-
     q.result.pretty_output()
     print('backward query: ' + str(end - start))
+
+    return q
+
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='An index for accelerating interactive data exploration.')
@@ -413,8 +402,16 @@ if __name__ == '__main__':
         vizcube.build_parallel(args['input_dir'], args['delimiter'])
         vizcube.save(args['cube_dir'])
 
+<<<<<<< HEAD
     #sql = "SELECT COUNT(vehicle_num) from traffic WHERE velocity_ave >= 4 AND velocity_ave < 8 GROUP BY link_id"
     #execute_direct_query(vizcube, sql)
+=======
+    sql = "SELECT FLOOR(ARR_TIME/1) AS bin_ARR_TIME,  COUNT(*) as count FROM flights WHERE (AIR_TIME >= 120 AND AIR_TIME < 500) GROUP BY bin_ARR_TIME"
+    # execute_direct_query(vizcube, sql)
+    q = execute_backward_query(vizcube, sql, [Condition('AIR_TIME', [float(150), float(500)], Type.categorical), Condition("DISTANCE", [float(0), float(1000)], Type.categorical)])
+    print(q.result.convert_to_filters())
+    print(q.result.convert_to_filters_IN())
+>>>>>>> 136f7fbb077e88a89c7a7bde84e8eabe024db5ab
 
 
 
@@ -423,6 +420,10 @@ if __name__ == '__main__':
 ====EXPERIMENT ARGS====
 flights_1M.csv args:
     --input-dir data/dataset_flights_1M.csv --name flights_1M --dimensions AIR_TIME ARR_DELAY ARR_TIME DEP_DELAY DEP_TIME DISTANCE --types categorical categorical categorical categorical categorical categorical
+    sql = "SELECT FLOOR(DEP_TIME/1) AS bin_DEP_TIME,  COUNT(*) as count FROM flights WHERE (DISTANCE >= 985.7142857142858 AND DISTANCE < 1200 AND AIR_TIME >= 122.85714285714286 AND AIR_TIME < 500) GROUP BY bin_DEP_TIME"
+    backward_sql = "SELECT FLOOR(DEP_TIME/1) AS bin_DEP_TIME,  COUNT(*) as count FROM flights WHERE (DISTANCE >= 985.7142857142858 AND DISTANCE < 1200) GROUP BY bin_DEP_TIME"
+    execute_direct_query(vizcube, sql)
+    execute_backward_query(vizcube, backward_sql, [Condition('AIR_TIME', [122.85714285714286, 500], Type.categorical)])
 
 traffic_categorical.csv args:
     --input-dir data/traffic.csv --name traffic_categorical --dimensions link_id vehicle_num velocity_ave time --types categorical categorical categorical categorical --delimiter \t
