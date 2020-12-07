@@ -126,7 +126,7 @@ class Query(object):
 
     def parse(self, sql):
         # projection
-        projection = sql[sql.find("SELECT") + 6: sql.find("FROM")].strip()
+        projection = sql[sql.find("SELECT") + 6: sql.rfind("FROM")].strip()
         for column in projection.split(','):
             column = column.strip()
             if column.startswith("FLOOR"):
@@ -339,3 +339,6 @@ class Query(object):
     def clear(self):
         self.result = ResultSet(self.groupby, self.agg + '(' + self.measure + ')')
 
+if __name__ == '__main__':
+    q = Query()
+    q.parse("SELECT USER_TYPE AS bin_USER_TYPE,  AVG(FROM_LONGITUDE) as average_FROM_LONGITUDE FROM tbl_bike GROUP BY bin_USER_TYPE")

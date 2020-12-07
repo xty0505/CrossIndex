@@ -55,8 +55,8 @@ class TemporalDimension(object):
             layer.append(sub)
             pbar.update(sub.interval.count)
         r.drop(columns=['temporalBin'], inplace=True)
-        self.R.iloc[ds.interval.begin:ds.interval.end + 1, :] = r[:]
-        return layer
+        # self.R.iloc[ds.interval.begin:ds.interval.end + 1, :] = r[:]
+        return {'layer': layer, 'r': r}
 
 
 class CategoricalDimension(object):
@@ -78,7 +78,7 @@ class CategoricalDimension(object):
         r = r.sort_values(by=self.dimension_to_sort)
         r.set_index(pd.Index(range(begin, end + 1)), inplace=True)
 
-        print("[%s,%s]: %s" % (begin, end, list(r[dimension])))
+        # print("[%s,%s]: %s" % (begin, end, list(r[dimension])))
         last_bin = list(r[dimension])[0]
         value = 0
         for bin_name in r[dimension]:
@@ -97,8 +97,8 @@ class CategoricalDimension(object):
         layer.append(sub)
         pbar.update(value)
 
-        self.R.iloc[ds.interval.begin:ds.interval.end + 1, :] = r[:]
-        return layer
+        # self.R.iloc[ds.interval.begin:ds.interval.end + 1, :] = r[:]
+        return {'layer': layer, 'r': r}
 
 
 class SpatialDimension(object):
@@ -119,8 +119,8 @@ class SpatialDimension(object):
             layer.append(sub)
             pbar.update(sub.interval.count)
         r.drop(columns=['geohash'], inplace=True)
-        self.R.iloc[ds.interval.begin:ds.interval.end + 1, :] = r[:]
-        return layer
+        # self.R.iloc[ds.interval.begin:ds.interval.end + 1, :] = r[:]
+        return {'layer': layer, 'r': r}
 
 class NumericalDimension(object):
     def __init__(self, R, dimension, ds, bin_width):
@@ -163,6 +163,5 @@ class NumericalDimension(object):
         layer.append(sub)
         pbar.update(value)
 
-        self.R.iloc[ds.interval.begin:ds.interval.end + 1, :] = r[:]
-        # r.drop(columns=[bin_label], inplace=True)
-        return layer
+        # self.R.iloc[ds.interval.begin:ds.interval.end + 1, :] = r[:]
+        return {'layer': layer, 'r': r}

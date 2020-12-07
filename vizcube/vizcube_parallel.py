@@ -118,20 +118,22 @@ class VizCube(object):
         for i in range(len(self.dimensions)):
             dimension = self.dimensions[i]
             dimension_type = self.types[i]
-            sort = Sort(self.R, 0, len(self.R) - 1)
+            # sort = Sort(self.R, 0, len(self.R) - 1)
 
             if i == 0:
                 root = DimensionSet('root', -1, 'all', Interval(0, len(self.R) - 1))
-                result = sort.sort(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
-                self.dimensionSetLayers.append(result)
+                result = Sort(self.R).sort(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
+                self.dimensionSetLayers.append(result['layer'])
+                self.R = result['r']
             else:
-                #result = Parallel(n_jobs=12, backend='threading')(
-                #    delayed(sort.sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
-                #    ds in self.dimensionSetLayers[i - 1])
-                result = []
-                for ds in self.dimensionSetLayers[i - 1]:
-                    result.append(sort.sort(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar))
-                layer = reduce(operator.add, result)
+                results = Parallel(n_jobs=8, backend='threading')(
+                   delayed(Sort(self.R).sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
+                   ds in self.dimensionSetLayers[i - 1])
+                # result = []
+                # for ds in self.dimensionSetLayers[i - 1]:
+                #     result.append(sort.sort(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar))
+                layer = reduce(operator.add, [r['layer'] for r in results])
+                self.R = pd.concat([r['r'] for r in results])
                 self.dimensionSetLayers.append(layer)
             if dimension_type == Type.numerical:
                 self.R.drop(columns=[dimension + '_bin'], inplace=True)
@@ -396,18 +398,15 @@ if __name__ == '__main__':
         vizcube.build_parallel(args['input_dir'], args['delimiter'])
         vizcube.save(args['cube_dir'])
 
-    sql = "SELECT FLOOR(ARR_TIME/1) AS bin_ARR_TIME,  COUNT(*) as count FROM flights WHERE (AIR_TIME >= 120 AND AIR_TIME < 500) GROUP BY bin_ARR_TIME"
+    # sql = "SELECT FLOOR(ARR_TIME/1) AS bin_ARR_TIME,  COUNT(*) as count FROM flights WHERE (AIR_TIME >= 150 AND AIR_TIME < 500 AND DISTANCE >= 0 AND DISTANCE < 1000) GROUP BY bin_ARR_TIME"
     # execute_direct_query(vizcube, sql)
-    q = execute_backward_query(vizcube, sql, [Condition('AIR_TIME', [float(150), float(500)], Type.categorical), Condition("DISTANCE", [float(0), float(1000)], Type.categorical)])
-    print(q.result.convert_to_filters())
-    print(q.result.convert_to_filters_IN())
 
 
 
 
 ''' 
 ====EXPERIMENT ARGS====
-flights_1M.csv args:
+flights_1M_bak.csv args:
     --input-dir data/dataset_flights_1M.csv --name flights_1M --dimensions AIR_TIME ARR_DELAY ARR_TIME DEP_DELAY DEP_TIME DISTANCE --types categorical categorical categorical categorical categorical categorical
     sql = "SELECT FLOOR(DEP_TIME/1) AS bin_DEP_TIME,  COUNT(*) as count FROM flights WHERE (DISTANCE >= 985.7142857142858 AND DISTANCE < 1200 AND AIR_TIME >= 122.85714285714286 AND AIR_TIME < 500) GROUP BY bin_DEP_TIME"
     backward_sql = "SELECT FLOOR(DEP_TIME/1) AS bin_DEP_TIME,  COUNT(*) as count FROM flights WHERE (DISTANCE >= 985.7142857142858 AND DISTANCE < 1200) GROUP BY bin_DEP_TIME"

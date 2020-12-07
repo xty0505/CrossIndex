@@ -2,7 +2,7 @@ from type_parallel import *
 
 
 class Sort(object):
-    def __init__(self, R, begin, end):
+    def __init__(self, R, begin=0, end=0):
         self.R = R
         self.begin = begin
         self.end = end
