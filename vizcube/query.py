@@ -73,10 +73,14 @@ class Condition(object):
 
     def adjust_subset(self, ds):
         new_subSet = []
+        if ds.subSet[0].interval.begin >= ds.interval.begin and ds.subSet[-1].interval.end <= ds.interval.end:
+            return
         for sub in ds.subSet:
             # 原ds下的sub不再属于new_ds
-            if sub.interval.begin > ds.interval.end or sub.interval.end < ds.interval.begin:
+            if sub.interval.end < ds.interval.begin:
                 continue
+            if sub.interval.begin > ds.interval.end:
+                break
 
             # 原ds下的部分sub属于new_ds, 调整相应sub的interval, 并递归调整sub的subSet
             if sub.interval.begin < ds.interval.begin <= sub.interval.end <= ds.interval.end:

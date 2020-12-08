@@ -32,6 +32,6 @@ class Sort(object):
             d = SpatialDimension(self.R, hashLength)
             return d.bin(dimension, self.ds, self.begin, self.end, pbar)
         elif dimension_type == Type.numerical:
-            bin_width = 20
+            bin_width = 10
             d = NumericalDimension(self.R, dimension, ds, bin_width)
             return d.bin(dimension, ds, begin, end, pbar)
