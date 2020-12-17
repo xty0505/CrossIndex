@@ -195,7 +195,7 @@ class Query(object):
                     condition = Condition(dimension, value, Type.categorical)
                 # between
                 elif where.find('BETWEEN') != -1:
-                    dimension = where.split('BETWEEN')[0].strip()[1:]
+                    dimension = where.split('BETWEEN')[0].strip().strip('(')
                     value = [s.strip() for s in where.split('BETWEEN')[1].replace('\'', '').split('and')]
                     condition = Condition(dimension, value, Type.temporal)
 

@@ -101,6 +101,44 @@ class VizCube(object):
         self.dimensionSetLayers[last_l - 1][-1].subSet = subSet
         return last_l - 1, ''
 
+    def build(self, path, delimiter):
+        start = time.time()
+        self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
+        print('pd.read_csv finished.')
+
+        # bin numerical
+        for i in range(len(self.dimensions)):
+            if self.types[i] == Type.numerical:
+                bin_label = self.dimensions[i] + '_bin'
+                bin_width = 20
+                self.R[bin_label] = pd.cut(self.R[self.dimensions[i]], bin_width).tolist()
+
+        # process bar
+        self.pbar = tqdm(desc='VizCube Build Parallel', total=len(self.R) * len(self.dimensions))
+        for i in range(len(self.dimensions)):
+            dimension = self.dimensions[i]
+            dimension_type = self.types[i]
+            sorter = Sort(self.R)
+
+            if i == 0:
+                root = DimensionSet('root', -1, 'all', Interval(0, len(self.R) - 1))
+                result = sorter.sort(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
+                self.dimensionSetLayers.append(result['layer'])
+                self.R = result['r']
+            else:
+                results = []
+                for ds in self.dimensionSetLayers[i - 1]:
+                    results.append(sorter.sort(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar))
+                layer = reduce(operator.add, [r['layer'] for r in results])
+                self.R = pd.concat([r['r'] for r in results])
+                self.dimensionSetLayers.append(layer)
+            if dimension_type == Type.numerical:
+                self.R.drop(columns=[dimension + '_bin'], inplace=True)
+        self.pbar.close()
+        self.ready = True
+        end = time.time()
+        print('build time:' + str(end - start))
+
     def build_parallel(self, path, delimiter):
         start = time.time()
         self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
@@ -118,16 +156,16 @@ class VizCube(object):
         for i in range(len(self.dimensions)):
             dimension = self.dimensions[i]
             dimension_type = self.types[i]
-            # sort = Sort(self.R, 0, len(self.R) - 1)
+            sorter = Sort(self.R)
 
             if i == 0:
                 root = DimensionSet('root', -1, 'all', Interval(0, len(self.R) - 1))
-                result = Sort(self.R).sort(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
+                result = sorter.sort(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
                 self.dimensionSetLayers.append(result['layer'])
                 self.R = result['r']
             else:
                 results = Parallel(n_jobs=8, backend='threading')(
-                   delayed(Sort(self.R).sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
+                   delayed(sorter.sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
                    ds in self.dimensionSetLayers[i - 1])
                 # result = []
                 # for ds in self.dimensionSetLayers[i - 1]:
@@ -358,6 +396,8 @@ def execute_direct_query(vizcube, sql):
     q.result.pretty_output()
     print('direct query time:' + str(end - start))
 
+    return q
+
 def execute_backward_query(vizcube, sql, new_conditions):
     q = Query(cube=vizcube)
     q.parse(sql)
@@ -382,6 +422,7 @@ if __name__ == '__main__':
     argparser.add_argument('--types', dest='types', nargs='+', type=str, help='types of dimensions')
 
     argparser.add_argument('--delimiter', dest='delimiter', help='delimiter of csv file', default=',')
+    argparser.add_argument('--single', dest='single', action='store_true', help='whether to build in single thread', default=False)
 
     args = vars(argparser.parse_args())
 
@@ -395,12 +436,16 @@ if __name__ == '__main__':
     if os.path.exists(args['cube_dir'] + args['name'] + '.cube'):
         vizcube.load(args['cube_dir'], args['name'])
     else:
-        vizcube.build_parallel(args['input_dir'], args['delimiter'])
+        if args['single'] == True:
+            vizcube.build(args['input_dir'], args['delimiter'])
+        else:
+            vizcube.build_parallel(args['input_dir'], args['delimiter'])
         vizcube.save(args['cube_dir'])
 
-    sql = "SELECT FLOOR(ARR_TIME/1) AS bin_ARR_TIME,  COUNT(*) as count FROM flights WHERE (AIR_TIME >= 150 AND AIR_TIME < 500 AND DISTANCE >= 0 AND DISTANCE < 1000) GROUP BY bin_ARR_TIME"
-    execute_direct_query(vizcube, sql)
-
+    sql = "SELECT AVG(quantity) from myshop WHERE gender = '女' AND date BETWEEN '2019' and '2020' GROUP BY category"
+    q = execute_direct_query(vizcube, sql)
+    print(q.result.convert_to_filters_IN())
+    print(q.result.convert_to_filters())
 
 
 
@@ -408,6 +453,8 @@ if __name__ == '__main__':
 ====EXPERIMENT ARGS====
 flights_1M_numerical.csv args:
     --input-dir data/dataset_flights_1M.csv --name flights_1M_numerical --dimensions DISTANCE AIR_TIME ARR_TIME DEP_TIME ARR_DELAY DEP_DELAY --types numerical numerical numerical numerical categorical categorical 
+    sql = "SELECT FLOOR(ARR_TIME/1) AS bin_ARR_TIME,  COUNT(*) as count FROM flights WHERE (AIR_TIME >= 150 AND AIR_TIME < 500 AND DISTANCE >= 0 AND DISTANCE < 1000) GROUP BY bin_ARR_TIME"
+    execute_direct_query(vizcube, sql)
 
 flights_1M_categorical.csv args:
     --input-dir data/dataset_flights_1M.csv --name flights_1M_categorical --dimensions AIR_TIME ARR_DELAY ARR_TIME DEP_DELAY DEP_TIME DISTANCE --types categorical categorical categorical categorical categorical categorical
@@ -436,7 +483,7 @@ trace.csv args:
     execute_backward_query(vizcube, backward_sql,[Condition('link_id', ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00'], Type.categorical)])
     
 myshop_temporal.csv args:
-    --name myshop_temporal --dimensions category itemname gender nationality date --types categorical categorical categorical categorical temporcal --delimiter \t
+    --input-dir data/myshop.csv --name myshop_temporal --dimensions category itemname gender nationality date --types categorical categorical categorical categorical temporal --delimiter \t
     sql = "SELECT AVG(quantity) from myshop WHERE gender = '女' AND date BETWEEN '2019' and '2020' GROUP BY category"
     
 bike.csv args:
