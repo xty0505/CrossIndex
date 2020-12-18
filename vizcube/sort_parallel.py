@@ -25,11 +25,11 @@ class Sort(object):
             by = 'YEAR'
             granularity = 1
             format = '%m/%d/%Y %H:%M:%S %p'
-            d = TemporalDimension(self.R, by, granularity, format)
+            d = TemporalDimension(self.R, ds=ds, by=by, granularity=granularity, format=format)
             return d.bin(dimension, self.ds, self.begin, self.end, pbar)
         elif dimension_type == Type.spatial:
             hashLength = 8
-            d = SpatialDimension(self.R, hashLength)
+            d = SpatialDimension(self.R, ds=ds, hashLength=hashLength)
             return d.bin(dimension, self.ds, self.begin, self.end, pbar)
         elif dimension_type == Type.numerical:
             bin_width = 10

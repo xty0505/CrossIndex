@@ -493,5 +493,5 @@ myshop_temporal.csv args:
     sql = "SELECT AVG(quantity) from myshop WHERE gender = '女' AND date BETWEEN '2019' and '2020' GROUP BY category"
     
 bike.csv args:
-    
+    --input-dir data/Divvy_Trips.csv --name bike --dimensions "FROM_LONGITUDE,FROM_LATITUDE" USER_TYPE START_TIME -types spatial categorical temporal
 '''

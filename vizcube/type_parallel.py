@@ -27,11 +27,20 @@ class Type(object):
 
 
 class TemporalDimension(object):
-    def __init__(self, R, by, granularity, format):
+    def __init__(self, R, ds, by, granularity, format):
         self.R = R
         self.by = by
         self.granularity = granularity
         self.format = format
+
+        dimension_to_sort = ['temporalBin']
+        p = ds
+        while p is not None:
+            if p.type == Type.numerical:
+                dimension_to_sort.append(p.dimension)
+            p = p.parent
+        dimension_to_sort.reverse()
+        self.dimension_to_sort = dimension_to_sort
 
     def bin_by_granularity(self, temporal_data):
         date = datetime.datetime.strptime(temporal_data, self.format)
@@ -48,12 +57,25 @@ class TemporalDimension(object):
         r = r.sort_values(by=dimension)
         r['temporalBin'] = r[dimension].apply(self.bin_by_granularity)
         r.set_index(pd.Index(range(begin, end + 1)), inplace=True)
-        for index, value in r['temporalBin'].value_counts().sort_index().items():
-            sub = DimensionSet(dimension, Type.temporal, index, Interval(begin, begin + value - 1), ds)
-            begin = begin + value
-            ds.subSet.append(sub)
-            layer.append(sub)
-            pbar.update(sub.interval.count)
+
+        last_bin = list(r[dimension])[0]
+        value = 0
+        for bin_name in r['temporalBin']:
+            if last_bin != bin_name:
+                sub = DimensionSet(dimension, Type.temporal, str(last_bin), Interval(begin, begin + value - 1), ds)
+                begin = begin + value
+                ds.subSet.append(sub)
+                layer.append(sub)
+                pbar.update(value)
+                # reset
+                value = 0
+                last_bin = bin_name
+            value += 1
+        sub = DimensionSet(dimension, Type.temporal, str(last_bin), Interval(begin, begin + value - 1), ds)
+        ds.subSet.append(sub)
+        layer.append(sub)
+        pbar.update(value)
+
         r.drop(columns=['temporalBin'], inplace=True)
         # self.R.iloc[ds.interval.begin:ds.interval.end + 1, :] = r[:]
         return {'layer': layer, 'r': r}
@@ -78,7 +100,6 @@ class CategoricalDimension(object):
         r = r.sort_values(by=self.dimension_to_sort)
         r.set_index(pd.Index(range(begin, end + 1)), inplace=True)
 
-        # print("[%s,%s]: %s" % (begin, end, list(r[dimension])))
         last_bin = list(r[dimension])[0]
         value = 0
         for bin_name in r[dimension]:
@@ -102,25 +123,48 @@ class CategoricalDimension(object):
 
 
 class SpatialDimension(object):
-    def __init__(self, R, hashLength):
+    def __init__(self, R, ds, hashLength):
         self.R = R
         self.length = hashLength
+
+        dimension_to_sort = ['geohash']
+        p = ds
+        while p is not None:
+            if p.type == Type.numerical:
+                dimension_to_sort.append(p.dimension)
+            p = p.parent
+        dimension_to_sort.reverse()
+        self.dimension_to_sort = dimension_to_sort
 
     def bin(self, lnglat, ds, begin, end, pbar):
         layer = []
         r = self.R.iloc[begin:end + 1]
         r['geohash'] = r.apply(lambda x: geohash2.encode(x[lnglat[1]], x[lnglat[0]], self.length), axis=1)
-        r = r.sort_values(by='geohash')
+        r = r.sort_values(by=self.dimension_to_sort)
         r.set_index(pd.Index(range(begin, end + 1)), inplace=True)
-        for index, value in r['geohash'].value_counts().sort_index().items():
-            sub = DimensionSet('geohash', Type.spatial, index, Interval(begin, begin + value - 1), ds)
-            begin = begin + value
-            ds.subSet.append(sub)
-            layer.append(sub)
-            pbar.update(sub.interval.count)
+
+        last_bin = list(r['geohash'])[0]
+        value = 0
+        for bin_name in r['geohash']:
+            if last_bin != bin_name:
+                sub = DimensionSet('geohash', Type.spatial, str(last_bin), Interval(begin, begin + value - 1), ds)
+                begin = begin + value
+                ds.subSet.append(sub)
+                layer.append(sub)
+                pbar.update(value)
+                # reset
+                value = 0
+                last_bin = bin_name
+            value += 1
+        sub = DimensionSet('geohash', Type.spatial, str(last_bin), Interval(begin, begin + value - 1), ds)
+        ds.subSet.append(sub)
+        layer.append(sub)
+        pbar.update(value)
+
         r.drop(columns=['geohash'], inplace=True)
         # self.R.iloc[ds.interval.begin:ds.interval.end + 1, :] = r[:]
         return {'layer': layer, 'r': r}
+
 
 class NumericalDimension(object):
     def __init__(self, R, dimension, ds, bin_width):
