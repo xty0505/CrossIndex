@@ -125,6 +125,7 @@ class VizCube(object):
                 result = sorter.sort(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
                 self.dimensionSetLayers.append(result['layer'])
                 self.R = result['r']
+                del result
             else:
                 results = []
                 for ds in self.dimensionSetLayers[i - 1]:
@@ -132,8 +133,10 @@ class VizCube(object):
                 layer = reduce(operator.add, [r['layer'] for r in results])
                 self.R = pd.concat([r['r'] for r in results])
                 self.dimensionSetLayers.append(layer)
+                del results
             if dimension_type == Type.numerical:
                 self.R.drop(columns=[dimension + '_bin'], inplace=True)
+            del sorter
         self.pbar.close()
         self.ready = True
         end = time.time()
@@ -163,6 +166,7 @@ class VizCube(object):
                 result = sorter.sort(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
                 self.dimensionSetLayers.append(result['layer'])
                 self.R = result['r']
+                del result
             else:
                 results = Parallel(n_jobs=8, backend='threading')(
                    delayed(sorter.sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
@@ -173,8 +177,10 @@ class VizCube(object):
                 layer = reduce(operator.add, [r['layer'] for r in results])
                 self.R = pd.concat([r['r'] for r in results])
                 self.dimensionSetLayers.append(layer)
+                del results
             if dimension_type == Type.numerical:
                 self.R.drop(columns=[dimension + '_bin'], inplace=True)
+            del sorter
         self.pbar.close()
         self.ready = True
         end = time.time()
@@ -442,10 +448,10 @@ if __name__ == '__main__':
             vizcube.build_parallel(args['input_dir'], args['delimiter'])
         vizcube.save(args['cube_dir'])
 
-    sql = "SELECT AVG(quantity) from myshop WHERE gender = '女' AND date BETWEEN '2019' and '2020' GROUP BY category"
-    q = execute_direct_query(vizcube, sql)
-    print(q.result.convert_to_filters_IN())
-    print(q.result.convert_to_filters())
+    # sql = "SELECT AVG(quantity) from myshop WHERE gender = '女' AND date BETWEEN '2019' and '2020' GROUP BY category"
+    # q = execute_direct_query(vizcube, sql)
+    # print(q.result.convert_to_filters_IN())
+    # print(q.result.convert_to_filters())
 
 
 
