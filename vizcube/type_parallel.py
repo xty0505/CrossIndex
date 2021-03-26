@@ -54,11 +54,11 @@ class TemporalDimension(object):
     def bin(self, dimension, ds, begin, end, pbar):
         layer = []
         r = self.R.iloc[begin:end + 1]
-        r = r.sort_values(by=dimension)
         r['temporalBin'] = r[dimension].apply(self.bin_by_granularity)
+        r = r.sort_values(by=self.dimension_to_sort)
         r.set_index(pd.Index(range(begin, end + 1)), inplace=True)
 
-        last_bin = list(r[dimension])[0]
+        last_bin = list(r['temporalBin'])[0]
         value = 0
         for bin_name in r['temporalBin']:
             if last_bin != bin_name:

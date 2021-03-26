@@ -22,9 +22,9 @@ class Sort(object):
             d = CategoricalDimension(self.R, dimension, ds)
             return d.bin(dimension, self.ds, self.begin, self.end, pbar)
         elif dimension_type == Type.temporal:
-            by = 'YEAR'
+            by = 'DAY'
             granularity = 1
-            format = '%m/%d/%Y %H:%M:%S %p'
+            format = '%Y/%m/%d %H:%M'
             d = TemporalDimension(self.R, ds=ds, by=by, granularity=granularity, format=format)
             return d.bin(dimension, self.ds, self.begin, self.end, pbar)
         elif dimension_type == Type.spatial:

@@ -144,8 +144,8 @@ class VizCube(object):
 
     def build_parallel(self, path, delimiter):
         start = time.time()
-        self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
-        print('pd.read_csv finished.')
+        # self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
+        # print('pd.read_csv finished.')
 
         # bin numerical
         for i in range(len(self.dimensions)):
@@ -391,6 +391,38 @@ class VizCube(object):
         q.result.pretty_output()
         print('direct query time:' + str(end - start))
 
+    def calculate_cardinality(self, path, delimiter):
+        self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
+        cardinalities = {}
+        for i in range(len(self.dimensions)):
+            d = self.dimensions[i]
+            if self.types[i] == Type.spatial:
+                geohash = self.R.apply(lambda x: geohash2.encode(x[d[1]], x[d[0]], 8), axis=1)
+                cardinality = len(geohash.unique())
+                key = ",".join(d)
+                cardinalities[key] = cardinality
+            else:
+                cardinality = len(self.R[d].unique())
+                cardinalities[d] = cardinality
+        return cardinalities
+
+    def adjust_by_cardinality(self, path, delimiter, reverse):
+        cardinalities = self.calculate_cardinality(path, delimiter)
+        cardinalities = sorted(cardinalities.items(), key=lambda kv: (kv[1], kv[0]), reverse=reverse)
+        print(cardinalities)
+
+        tmp_d = []
+        tmp_t = []
+        for c in cardinalities:
+            key = c[0]
+            if key.find(',') != -1:
+                key = key.split(',')
+            tmp_d.append(key)
+            tmp_t.append(self.types[self.dimensions.index(key)])
+        self.dimensions = tmp_d
+        self.types = tmp_t
+
+
 def execute_direct_query(vizcube, sql):
     q = Query(cube=vizcube)
     q.parse(sql)
@@ -445,18 +477,21 @@ if __name__ == '__main__':
         if args['single'] == True:
             vizcube.build(args['input_dir'], args['delimiter'])
         else:
+            vizcube.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
             vizcube.build_parallel(args['input_dir'], args['delimiter'])
         vizcube.save(args['cube_dir'])
 
-    # sql = "SELECT AVG(quantity) from myshop WHERE gender = '女' AND date BETWEEN '2019' and '2020' GROUP BY category"
-    # q = execute_direct_query(vizcube, sql)
-    # print(q.result.convert_to_filters_IN())
-    # print(q.result.convert_to_filters())
+    sql = "SELECT USER_TYPE AS bin_USER_TYPE,  COUNT(*) as count FROM tbl_bike GROUP BY bin_USER_TYPE"
+    q = execute_direct_query(vizcube, sql)
 
 
 
 ''' 
 ====EXPERIMENT ARGS====
+bike_10M.csv args:
+    --input-dir data/Bikes/Divvy_Trips.csv --name bike --dimensions geohash USER_TYPE START_TIME -types spatial categorical temporal
+    sql = "SELECT USER_TYPE AS bin_USER_TYPE,  COUNT(*) as count FROM tbl_bike GROUP BY bin_USER_TYPE"
+    
 flights_1M_numerical.csv args:
     --input-dir data/dataset_flights_1M.csv --name flights_1M_numerical --dimensions DISTANCE AIR_TIME ARR_TIME DEP_TIME ARR_DELAY DEP_DELAY --types numerical numerical numerical numerical categorical categorical 
     sql = "SELECT FLOOR(ARR_TIME/1) AS bin_ARR_TIME,  COUNT(*) as count FROM flights WHERE (AIR_TIME >= 150 AND AIR_TIME < 500 AND DISTANCE >= 0 AND DISTANCE < 1000) GROUP BY bin_ARR_TIME"
@@ -482,16 +517,13 @@ traffic.csv args:
     sql = "SELECT COUNT(vehicle_num) from traffic WHERE time = '651'  GROUP BY link_id"
 
 trace.csv args:
-    --name trace --dimensions "lng,lat" link_id vehicle_id timestep --types spatial categorical categorical categorical
+    --input-dir data/trace.csv --name trace --dimensions "lng,lat" link_id vehicle_id timestep --types spatial categorical categorical categorical
     direct_sql = "SELECT COUNT(vehicle_length) from trace WHERE geohash='wtw3sm'  AND link_id IN ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00'] AND timestep >= 39654.4 AND timestep < 39800.4 GROUP BY geohash"
     backward_sql = "SELECT COUNT(vehicle_length) from trace WHERE geohash='wtw3sm' AND timestep >= 39654.4 AND timestep < 39800.4 GROUP BY geohash"
     execute_direct_query(vizcube, direct_sql)
     execute_backward_query(vizcube, backward_sql,[Condition('link_id', ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00'], Type.categorical)])
     
 myshop_temporal.csv args:
-    --input-dir data/myshop.csv --name myshop_temporal --dimensions category itemname gender nationality date --types categorical categorical categorical categorical temporal --delimiter \t
-    sql = "SELECT AVG(quantity) from myshop WHERE gender = '女' AND date BETWEEN '2019' and '2020' GROUP BY category"
-    
-bike.csv args:
-    --input-dir data/Divvy_Trips.csv --name bike --dimensions "FROM_LONGITUDE,FROM_LATITUDE" USER_TYPE START_TIME -types spatial categorical temporal
+    --input-dir data/myshop.csv --name myshop_temporal --dimensions category itemname gender nationality date --types categorical categorical categorical categorical temporal
+    sql = "SELECT COUNT(quantity) from myshop WHERE gender = '女' AND date BETWEEN '2019-05-05' and '2020-05-05' GROUP BY category"
 '''
