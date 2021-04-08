@@ -43,6 +43,9 @@ class TemporalDimension(object):
         self.dimension_to_sort = dimension_to_sort
 
     def bin_by_granularity(self, temporal_data):
+        # remove time zone (2020-02-01 00:00:00+00:00)
+        if '+' in temporal_data:
+            temporal_data = temporal_data[:-6]
         date = datetime.datetime.strptime(temporal_data, self.format)
         if self.by == 'YEAR':
             return date.year

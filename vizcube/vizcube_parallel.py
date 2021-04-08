@@ -101,7 +101,7 @@ class VizCube(object):
         self.dimensionSetLayers[last_l - 1][-1].subSet = subSet
         return last_l - 1, ''
 
-    def build(self, path, delimiter):
+    def build(self, path, delimiter, options):
         start = time.time()
         self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
         print('pd.read_csv finished.')
@@ -118,7 +118,7 @@ class VizCube(object):
         for i in range(len(self.dimensions)):
             dimension = self.dimensions[i]
             dimension_type = self.types[i]
-            sorter = Sort(self.R)
+            sorter = Sort(R=self.R, options=options)
 
             if i == 0:
                 root = DimensionSet('root', -1, 'all', Interval(0, len(self.R) - 1))
@@ -142,7 +142,7 @@ class VizCube(object):
         end = time.time()
         print('build time:' + str(end - start))
 
-    def build_parallel(self, path, delimiter):
+    def build_parallel(self, path, delimiter, options):
         start = time.time()
         # self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
         # print('pd.read_csv finished.')
@@ -159,7 +159,7 @@ class VizCube(object):
         for i in range(len(self.dimensions)):
             dimension = self.dimensions[i]
             dimension_type = self.types[i]
-            sorter = Sort(self.R)
+            sorter = Sort(R=self.R, options=options)
 
             if i == 0:
                 root = DimensionSet('root', -1, 'all', Interval(0, len(self.R) - 1))
@@ -171,9 +171,6 @@ class VizCube(object):
                 results = Parallel(n_jobs=8, backend='threading')(
                    delayed(sorter.sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
                    ds in self.dimensionSetLayers[i - 1])
-                # result = []
-                # for ds in self.dimensionSetLayers[i - 1]:
-                #     result.append(sort.sort(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar))
                 layer = reduce(operator.add, [r['layer'] for r in results])
                 self.R = pd.concat([r['r'] for r in results])
                 self.dimensionSetLayers.append(layer)
@@ -462,6 +459,16 @@ if __name__ == '__main__':
     argparser.add_argument('--delimiter', dest='delimiter', help='delimiter of csv file', default=',')
     argparser.add_argument('--single', dest='single', action='store_true', help='whether to build in single thread', default=False)
 
+    # some options for different dimension type
+    # temporal
+    argparser.add_argument('--by', dest='by', help='group by year,month,day etc. for temporal', default='DAY')
+    argparser.add_argument('--granularity', dest='granularity', type=int, help='granularity for temporal', default=1)
+    argparser.add_argument('--date-format', dest='date_format', help='date format for temporal', default='%Y-%m-%d %H:%M:%S')
+    # spatial
+    argparser.add_argument('--hash-length', dest='hash_length', type=int, help='geohash code length for spatial', default=8)
+    # numerical
+    argparser.add_argument('--bin-width', dest='bin_width', type=int, help='bin width for numerical', default=10)
+
     args = vars(argparser.parse_args())
 
     # combine dimension args if its tpye is spatial
@@ -475,14 +482,15 @@ if __name__ == '__main__':
         vizcube.load(args['cube_dir'], args['name'])
     else:
         if args['single'] == True:
-            vizcube.build(args['input_dir'], args['delimiter'])
+            vizcube.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
+            vizcube.build(args['input_dir'], args['delimiter'], args)
         else:
             vizcube.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
-            vizcube.build_parallel(args['input_dir'], args['delimiter'])
+            vizcube.build_parallel(args['input_dir'], args['delimiter'], args)
         vizcube.save(args['cube_dir'])
 
-    sql = "SELECT USER_TYPE AS bin_USER_TYPE,  COUNT(*) as count FROM tbl_bike GROUP BY bin_USER_TYPE"
-    q = execute_direct_query(vizcube, sql)
+    # sql = "SELECT USER_TYPE AS bin_USER_TYPE,  COUNT(*) as count FROM tbl_bike GROUP BY bin_USER_TYPE"
+    # q = execute_direct_query(vizcube, sql)
 
 
 
