@@ -1,7 +1,7 @@
-from type_parallel import *
+from calc_type import *
 
 
-class Sort(object):
+class Dispatcher(object):
     def __init__(self, R, options, begin=0, end=0):
         self.R = R
         self.begin = begin
@@ -16,7 +16,7 @@ class Sort(object):
     def setDs(self, ds):
         self.ds = ds
 
-    def sort(self, begin, end, ds, dimension, dimension_type, pbar=None):
+    def dispatch(self, begin, end, ds, dimension, dimension_type, pbar=None):
         self.setBeginEnd(begin, end)
         self.setDs(ds)
         if dimension_type == Type.categorical:

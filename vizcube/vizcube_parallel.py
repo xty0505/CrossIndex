@@ -6,11 +6,12 @@ from functools import reduce
 from collections import defaultdict
 
 import pandas as pd
+import numpy as np
 from tqdm import tqdm
 
 from query import Query, Condition
-from sort_parallel import Sort
-from type_parallel import *
+from dispatcher import Dispatcher
+from calc_type import *
 
 
 class VizCube(object):
@@ -106,6 +107,13 @@ class VizCube(object):
         self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
         print('pd.read_csv finished.')
 
+        # sorting
+        print('sorting...')
+        self.R = self.R.sort_values(self.dimensions)
+        self.R.reset_index(drop=True)
+        print('sorting done.')
+        print('sorting time: '+str(time.time()-start))
+
         # bin numerical
         for i in range(len(self.dimensions)):
             if self.types[i] == Type.numerical:
@@ -118,25 +126,23 @@ class VizCube(object):
         for i in range(len(self.dimensions)):
             dimension = self.dimensions[i]
             dimension_type = self.types[i]
-            sorter = Sort(R=self.R, options=options)
+            dispatcher = Dispatcher(R=self.R, options=options)
 
             if i == 0:
                 root = DimensionSet('root', -1, 'all', Interval(0, len(self.R) - 1))
-                result = sorter.sort(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
-                self.dimensionSetLayers.append(result['layer'])
-                self.R = result['r']
-                del result
-            else:
-                results = []
-                for ds in self.dimensionSetLayers[i - 1]:
-                    results.append(sorter.sort(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar))
-                layer = reduce(operator.add, [r['layer'] for r in results])
-                self.R = pd.concat([r['r'] for r in results])
+                layer = dispatcher.dispatch(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
                 self.dimensionSetLayers.append(layer)
-                del results
+                del layer
+            else:
+                layer = []
+                for ds in self.dimensionSetLayers[i - 1]:
+                    l = dispatcher.dispatch(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar)
+                    layer.extend(l)
+                self.dimensionSetLayers.append(layer)
+                del layer
             if dimension_type == Type.numerical:
                 self.R.drop(columns=[dimension + '_bin'], inplace=True)
-            del sorter
+            del dispatcher
         self.pbar.close()
         self.ready = True
         end = time.time()
@@ -147,6 +153,13 @@ class VizCube(object):
         # self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
         # print('pd.read_csv finished.')
 
+        # sorting
+        print('sorting...')
+        self.R = self.R.sort_values(self.dimensions)
+        self.R.reset_index(drop=True)
+        print('sorting done.')
+        print('sorting time: '+str(time.time()-start))
+
         # bin numerical
         for i in range(len(self.dimensions)):
             if self.types[i] == Type.numerical:
@@ -159,25 +172,26 @@ class VizCube(object):
         for i in range(len(self.dimensions)):
             dimension = self.dimensions[i]
             dimension_type = self.types[i]
-            sorter = Sort(R=self.R, options=options)
+            dispatcher = Dispatcher(R=self.R, options=options)
 
             if i == 0:
                 root = DimensionSet('root', -1, 'all', Interval(0, len(self.R) - 1))
-                result = sorter.sort(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
-                self.dimensionSetLayers.append(result['layer'])
-                self.R = result['r']
-                del result
+                layer = dispatcher.dispatch(0, len(self.R) - 1, root, dimension, dimension_type, self.pbar)
+                self.dimensionSetLayers.append(layer)
+                del layer
             else:
-                results = Parallel(n_jobs=8, backend='threading')(
-                   delayed(sorter.sort)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
+                results = Parallel(n_jobs=32, backend='threading')(
+                   delayed(dispatcher.dispatch)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
                    ds in self.dimensionSetLayers[i - 1])
-                layer = reduce(operator.add, [r['layer'] for r in results])
-                self.R = pd.concat([r['r'] for r in results])
+                # concat multi thread results
+                concat_start = time.time()
+                layer = [item for sublist in results for item in sublist]
+                print('concat time: '+str(time.time()-concat_start))
                 self.dimensionSetLayers.append(layer)
                 del results
             if dimension_type == Type.numerical:
                 self.R.drop(columns=[dimension + '_bin'], inplace=True)
-            del sorter
+            del dispatcher
         self.pbar.close()
         self.ready = True
         end = time.time()
@@ -390,6 +404,7 @@ class VizCube(object):
 
     def calculate_cardinality(self, path, delimiter):
         self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
+        print('csv read fininshed.')
         cardinalities = {}
         for i in range(len(self.dimensions)):
             d = self.dimensions[i]
