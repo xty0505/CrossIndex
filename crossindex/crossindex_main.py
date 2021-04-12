@@ -1,17 +1,13 @@
-import os
-import time
-import operator
 import argparse
-from functools import reduce
+import time
 from collections import defaultdict
 
-import pandas as pd
-import numpy as np
+from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from query import Query, Condition
-from dispatcher import Dispatcher
 from calc_type import *
+from dispatcher import Dispatcher
+from query import Query
 
 
 class VizCube(object):
