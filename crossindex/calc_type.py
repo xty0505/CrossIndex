@@ -48,7 +48,7 @@ class TemporalDimension(object):
         layer = []
         r = self.R.iloc[begin:end + 1]
         cur = begin
-        for key, value in r[dimension].apply(self.bin_by_granularity).value_counts().items():
+        for key, value in r[dimension].apply(self.bin_by_granularity).value_counts().sort_index().items():
             sub = DimensionSet(dimension, Type.categorical, key, Interval(cur, cur+value-1), ds)
             cur += value
             ds.subSet.append(sub)
@@ -66,7 +66,7 @@ class CategoricalDimension(object):
         layer = []
         r = self.R.iloc[begin:end + 1]
         cur = begin
-        for key, value in r[dimension].value_counts().items():
+        for key, value in r[dimension].value_counts().sort_index().items():
             sub = DimensionSet(dimension, Type.categorical, key, Interval(cur, cur+value-1), ds)
             cur += value
             ds.subSet.append(sub)
@@ -86,7 +86,7 @@ class SpatialDimension(object):
         r = self.R.iloc[begin:end + 1]
         r['geohash'] = r.apply(lambda x: geohash2.encode(x[lnglat[1]], x[lnglat[0]], self.length), axis=1)
         cur = begin
-        for key,value in r['geohash'].value_counts().items():
+        for key,value in r['geohash'].value_counts().sort_index().items():
             sub = DimensionSet('geohash', Type.spatial, key, Interval(cur, cur+value-1), ds)
             cur += value
             ds.subSet.append(sub)
@@ -108,7 +108,7 @@ class NumericalDimension(object):
         r = self.R.iloc[begin: end + 1]
 
         cur = begin
-        for key,value in r[bin_label].value_counts().items():
+        for key,value in r[bin_label].value_counts().sort_index().items():
             sub = DimensionSet(dimension, Type.numerical, key, Interval(cur, cur+value-1), ds)
             cur += value
             ds.subSet.append(sub)

@@ -100,13 +100,13 @@ class CrossIndex(object):
 
     def build(self, path, delimiter, options):
         start = time.time()
-        self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
-        print('pd.read_csv finished.')
+        # self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
+        # print('pd.read_csv finished.')
 
         # sorting
         print('sorting...')
         self.R = self.R.sort_values(self.dimensions)
-        self.R.reset_index(drop=True)
+        self.R.reset_index(drop=True, inplace=True)
         print('sorting done.')
         print('sorting time: '+str(time.time()-start))
 
@@ -152,7 +152,7 @@ class CrossIndex(object):
         # sorting
         print('sorting...')
         self.R = self.R.sort_values(self.dimensions)
-        self.R.reset_index(drop=True)
+        self.R.reset_index(drop=True, inplace=True)
         print('sorting done.')
         print('sorting time: '+str(time.time()-start))
 
@@ -500,7 +500,7 @@ if __name__ == '__main__':
             crossindex.build_parallel(args['input_dir'], args['delimiter'], args)
         crossindex.save(args['cube_dir'])
 
-    sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2019-05-05' and '2019-06-05' AND origin = 'KMSP' GROUP BY day"
+    sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2020-05-05' and '2020-06-05' AND origin = 'KMSP' GROUP BY day"
     q = execute_direct_query(crossindex, sql)
 
 
