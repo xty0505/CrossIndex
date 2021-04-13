@@ -10,7 +10,7 @@ from dispatcher import Dispatcher
 from query import Query
 
 
-class VizCube(object):
+class CrossIndex(object):
     def __init__(self, name, dimensions=[], types=[]):
         self.R = pd.DataFrame()
         self.name = name
@@ -118,7 +118,7 @@ class VizCube(object):
                 self.R[bin_label] = pd.cut(self.R[self.dimensions[i]], bin_width).tolist()
 
         # process bar
-        self.pbar = tqdm(desc='VizCube Build Parallel', total=len(self.R) * len(self.dimensions))
+        self.pbar = tqdm(desc='CrossIndex Build Parallel', total=len(self.R) * len(self.dimensions))
         for i in range(len(self.dimensions)):
             dimension = self.dimensions[i]
             dimension_type = self.types[i]
@@ -164,7 +164,7 @@ class VizCube(object):
                 self.R[bin_label] = pd.cut(self.R[self.dimensions[i]], bin_width).tolist()
 
         # process bar
-        self.pbar = tqdm(desc='VizCube Build Parallel', total=len(self.R) * len(self.dimensions))
+        self.pbar = tqdm(desc='CrossIndex Build Parallel', total=len(self.R) * len(self.dimensions))
         for i in range(len(self.dimensions)):
             dimension = self.dimensions[i]
             dimension_type = self.types[i]
@@ -176,7 +176,7 @@ class VizCube(object):
                 self.dimensionSetLayers.append(layer)
                 del layer
             else:
-                results = Parallel(n_jobs=32, backend='threading')(
+                results = Parallel(n_jobs=8, backend='threading')(
                    delayed(dispatcher.dispatch)(ds.interval.begin, ds.interval.end, ds, dimension, dimension_type, self.pbar) for
                    ds in self.dimensionSetLayers[i - 1])
                 # concat multi thread results
@@ -388,11 +388,11 @@ class VizCube(object):
             ds.output()
 
     def execute_query(self, sql):
-        q = Query(cube=vizcube)
+        q = Query(cube=crossindex)
         q.parse(sql)
 
         start = time.time()
-        vizcube.query(q)
+        crossindex.query(q)
         end = time.time()
 
         q.result.pretty_output()
@@ -431,12 +431,12 @@ class VizCube(object):
         self.types = tmp_t
 
 
-def execute_direct_query(vizcube, sql):
-    q = Query(cube=vizcube)
+def execute_direct_query(crossindex, sql):
+    q = Query(cube=crossindex)
     q.parse(sql)
 
     start = time.time()
-    vizcube.query(q)
+    crossindex.query(q)
     end = time.time()
 
     q.result.pretty_output()
@@ -444,13 +444,13 @@ def execute_direct_query(vizcube, sql):
 
     return q
 
-def execute_backward_query(vizcube, sql, new_conditions):
-    q = Query(cube=vizcube)
+def execute_backward_query(crossindex, sql, new_conditions):
+    q = Query(cube=crossindex)
     q.parse(sql)
 
-    vizcube.query(q)
+    crossindex.query(q)
     start = time.time()
-    vizcube.backward_query(q, new_conditions)
+    crossindex.backward_query(q, new_conditions)
     end = time.time()
     q.result.pretty_output()
     print('backward query: ' + str(end - start))
@@ -488,25 +488,30 @@ if __name__ == '__main__':
             args['dimensions'][i] = args['dimensions'][i].split(',')
 
     # initialization
-    vizcube =VizCube(args['name'], args['dimensions'], args['types'])
+    crossindex =CrossIndex(args['name'], args['dimensions'], args['types'])
     if os.path.exists(args['cube_dir'] + args['name'] + '.cube'):
-        vizcube.load(args['cube_dir'], args['name'])
+        crossindex.load(args['cube_dir'], args['name'])
     else:
         if args['single'] == True:
-            vizcube.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
-            vizcube.build(args['input_dir'], args['delimiter'], args)
+            crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
+            crossindex.build(args['input_dir'], args['delimiter'], args)
         else:
-            vizcube.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
-            vizcube.build_parallel(args['input_dir'], args['delimiter'], args)
-        vizcube.save(args['cube_dir'])
+            crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
+            crossindex.build_parallel(args['input_dir'], args['delimiter'], args)
+        crossindex.save(args['cube_dir'])
 
-    # sql = "SELECT USER_TYPE AS bin_USER_TYPE,  COUNT(*) as count FROM tbl_bike GROUP BY bin_USER_TYPE"
-    # q = execute_direct_query(vizcube, sql)
+    sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2019-05-05' and '2019-06-05' AND origin = 'KMSP' GROUP BY day"
+    q = execute_direct_query(crossindex, sql)
 
 
 
 ''' 
 ====EXPERIMENT ARGS====
+flights_covid_10M.csv args:
+    --input-dir data/Flights_covid/flights_covid.csv --cube-dir cube/Flights_covid/ --name flight_covid_10M 
+    --dimensions callsign icao24 registration typecode origin destination day --types categorical categorical categorical categorical categorical categorical temporal
+    sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2019-05-05' and '2019-06-05' AND origin = 'KMSP' GROUP BY day"
+
 bike_10M.csv args:
     --input-dir data/Bikes/Divvy_Trips.csv --name bike --dimensions geohash USER_TYPE START_TIME -types spatial categorical temporal
     sql = "SELECT USER_TYPE AS bin_USER_TYPE,  COUNT(*) as count FROM tbl_bike GROUP BY bin_USER_TYPE"
@@ -514,14 +519,14 @@ bike_10M.csv args:
 flights_1M_numerical.csv args:
     --input-dir data/dataset_flights_1M.csv --name flights_1M_numerical --dimensions DISTANCE AIR_TIME ARR_TIME DEP_TIME ARR_DELAY DEP_DELAY --types numerical numerical numerical numerical categorical categorical 
     sql = "SELECT FLOOR(ARR_TIME/1) AS bin_ARR_TIME,  COUNT(*) as count FROM flights WHERE (AIR_TIME >= 150 AND AIR_TIME < 500 AND DISTANCE >= 0 AND DISTANCE < 1000) GROUP BY bin_ARR_TIME"
-    execute_direct_query(vizcube, sql)
+    execute_direct_query(crossindex, sql)
 
 flights_1M_categorical.csv args:
     --input-dir data/dataset_flights_1M.csv --name flights_1M_categorical --dimensions AIR_TIME ARR_DELAY ARR_TIME DEP_DELAY DEP_TIME DISTANCE --types categorical categorical categorical categorical categorical categorical
     sql = "SELECT FLOOR(DEP_TIME/1) AS bin_DEP_TIME,  COUNT(*) as count FROM flights WHERE (DISTANCE >= 985.7142857142858 AND DISTANCE < 1200 AND AIR_TIME >= 122.85714285714286 AND AIR_TIME < 500) GROUP BY bin_DEP_TIME"
     backward_sql = "SELECT FLOOR(DEP_TIME/1) AS bin_DEP_TIME,  COUNT(*) as count FROM flights WHERE (DISTANCE >= 985.7142857142858 AND DISTANCE < 1200) GROUP BY bin_DEP_TIME"
-    execute_direct_query(vizcube, sql)
-    execute_backward_query(vizcube, backward_sql, [Condition('AIR_TIME', [122.85714285714286, 500], Type.categorical)])
+    execute_direct_query(crossindex, sql)
+    execute_backward_query(crossindex, backward_sql, [Condition('AIR_TIME', [122.85714285714286, 500], Type.categorical)])
 
 traffic_categorical.csv args:
     --input-dir data/traffic.csv --name traffic_categorical --dimensions link_id vehicle_num velocity_ave time --types categorical categorical categorical categorical --delimiter \t
@@ -539,8 +544,8 @@ trace.csv args:
     --input-dir data/trace.csv --name trace --dimensions "lng,lat" link_id vehicle_id timestep --types spatial categorical categorical categorical
     direct_sql = "SELECT COUNT(vehicle_length) from trace WHERE geohash='wtw3sm'  AND link_id IN ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00'] AND timestep >= 39654.4 AND timestep < 39800.4 GROUP BY geohash"
     backward_sql = "SELECT COUNT(vehicle_length) from trace WHERE geohash='wtw3sm' AND timestep >= 39654.4 AND timestep < 39800.4 GROUP BY geohash"
-    execute_direct_query(vizcube, direct_sql)
-    execute_backward_query(vizcube, backward_sql,[Condition('link_id', ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00'], Type.categorical)])
+    execute_direct_query(crossindex, direct_sql)
+    execute_backward_query(crossindex, backward_sql,[Condition('link_id', ['152C909GV90152CL09GVD00', '152D309GVT0152CJ09GVM00'], Type.categorical)])
     
 myshop_temporal.csv args:
     --input-dir data/myshop.csv --name myshop_temporal --dimensions category itemname gender nationality date --types categorical categorical categorical categorical temporal

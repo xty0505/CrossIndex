@@ -4,7 +4,7 @@ import pandas as pd
 from dimension import Interval
 from dimension import DimensionSet
 from resultset import ResultSet
-from type_parallel import Type
+from calc_type import Type
 
 
 # where 条件
