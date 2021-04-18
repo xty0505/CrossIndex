@@ -19,8 +19,8 @@ class Condition(object):
         condition = self.value if self.value.__class__ == list else [self.value]
 
         def binary_search1(l, r, subset, target):
-            while l<=r:
-                mid = (l+r)/2
+            while l <= r:
+                mid = int((l+r)/2)
                 if subset[mid].value == target:
                     return mid
                 elif subset[mid].value > target:
@@ -41,7 +41,9 @@ class Condition(object):
                 idx = 0
                 for target in sorted(condition):
                     idx = binary_search1(idx, len(subset)-1, subset, target)
-                    if subset[idx].value == target:
+                    if idx < len(subset):
+                        print(subset[idx].dimension+','+str(idx)+','+subset[idx].value)
+                    if idx < len(subset) and subset[idx].value == target:
                         res.append(subset[idx])
         elif self.type == Type.temporal:
             idx = binary_search1(0, len(subset)-1, subset, condition[0])
@@ -58,6 +60,7 @@ class Condition(object):
         elif self.type == Type.numerical:
             # todo
             print('numerical')
+        return res
 
     def match(self, ds, R=None):
         value = ds.value
