@@ -14,6 +14,51 @@ class Condition(object):
         self.value = value
         self.type = type
 
+    def binary_match(self, subset):
+        res = []
+        condition = self.value if self.value.__class__ == list else [self.value]
+
+        def binary_search1(l, r, subset, target):
+            while l<=r:
+                mid = (l+r)/2
+                if subset[mid].value == target:
+                    return mid
+                elif subset[mid].value > target:
+                    r = mid-1
+                else:
+                    l = mid+1
+            return l
+
+        if self.type == Type.categorical:
+            if type(condition[0]) is float:
+                idx = binary_search1(0, len(subset)-1, subset, condition[0])
+                for i in range(idx, len(subset)):
+                    if condition[0] <= float(subset[i].value) < condition[1]:
+                        res.append(subset[i])
+                    else:
+                        break # float(subset[i].value) >= condition[1]
+            else:
+                idx = 0
+                for target in sorted(condition):
+                    idx = binary_search1(idx, len(subset)-1, subset, target)
+                    if subset[idx].value == target:
+                        res.append(subset[idx])
+        elif self.type == Type.temporal:
+            idx = binary_search1(0, len(subset)-1, subset, condition[0])
+            for i in range(idx, len(subset)):
+                if condition[0] <= subset[i].value <= condition[1]:
+                    res.append(subset[i])
+                else:
+                    break
+        elif self.type == Type.spatial:
+            idx = binary_search1(0, len(subset)-1, subset, condition[0])
+            for i in range(idx, len(subset)):
+                if subset[i].value.find(condition[0])>=0:
+                    res.append(subset[i])
+        elif self.type == Type.numerical:
+            # todo
+            print('numerical')
+
     def match(self, ds, R=None):
         value = ds.value
         condition = self.value if self.value.__class__ == list else [self.value]

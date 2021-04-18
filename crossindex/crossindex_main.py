@@ -231,9 +231,7 @@ class CrossIndex(object):
                                     tmpDS.append(sub)
                 else:
                     for ds in validDSs:
-                        for sub in ds.subSet:
-                            if where.match(sub):
-                                tmpDS.append(sub)
+                        tmpDS.extend(where.binary_match(ds.subSet))
                 validDSs = tmpDS
 
                 # 当前 where 条件筛选完后如果没有后续条件直接break
