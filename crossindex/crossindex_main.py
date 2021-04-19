@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from calc_type import *
 from dispatcher import Dispatcher
-from query import Query
+from query import Query,Condition
 
 
 class CrossIndex(object):
@@ -498,8 +498,12 @@ if __name__ == '__main__':
             crossindex.build_parallel(args['input_dir'], args['delimiter'], args)
         crossindex.save(args['cube_dir'])
 
-    sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2020-05-05' and '2020-06-05' AND origin = 'KMSP' GROUP BY day"
-    q = execute_direct_query(crossindex, sql)
+    # sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2020-05-05' and '2020-06-05' AND origin = 'KMSP' GROUP BY day"
+    # q = execute_direct_query(crossindex, sql)
+    sql = "SELECT FLOOR(DEP_TIME/1) AS bin_DEP_TIME,  COUNT(*) as count FROM flights WHERE (DISTANCE >= 985.7142857142858 AND DISTANCE < 1200 AND AIR_TIME >= 122.85714285714286 AND AIR_TIME < 500) GROUP BY bin_DEP_TIME"
+    backward_sql = "SELECT FLOOR(DEP_TIME/1) AS bin_DEP_TIME,  COUNT(*) as count FROM flights WHERE (DISTANCE >= 985.7142857142858 AND DISTANCE < 1200) GROUP BY bin_DEP_TIME"
+    execute_direct_query(crossindex, sql)
+    execute_backward_query(crossindex, backward_sql, [Condition('AIR_TIME', [122.85714285714286, 500], Type.categorical)])
 
 
 
@@ -520,7 +524,7 @@ flights_1M_numerical.csv args:
     execute_direct_query(crossindex, sql)
 
 flights_1M_categorical.csv args:
-    --input-dir data/dataset_flights_1M.csv --name flights_1M_categorical --dimensions AIR_TIME ARR_DELAY ARR_TIME DEP_DELAY DEP_TIME DISTANCE --types categorical categorical categorical categorical categorical categorical
+    --input-dir data/Flights/dataset_flights_1M.csv --cube-dir cube/Flights/ --name flights_categorical_1M --dimensions AIR_TIME ARR_DELAY ARR_TIME DEP_DELAY DEP_TIME DISTANCE --types categorical categorical categorical categorical categorical categorical
     sql = "SELECT FLOOR(DEP_TIME/1) AS bin_DEP_TIME,  COUNT(*) as count FROM flights WHERE (DISTANCE >= 985.7142857142858 AND DISTANCE < 1200 AND AIR_TIME >= 122.85714285714286 AND AIR_TIME < 500) GROUP BY bin_DEP_TIME"
     backward_sql = "SELECT FLOOR(DEP_TIME/1) AS bin_DEP_TIME,  COUNT(*) as count FROM flights WHERE (DISTANCE >= 985.7142857142858 AND DISTANCE < 1200) GROUP BY bin_DEP_TIME"
     execute_direct_query(crossindex, sql)

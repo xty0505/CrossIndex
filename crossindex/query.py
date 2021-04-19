@@ -28,10 +28,21 @@ class Condition(object):
                 else:
                     l = mid+1
             return l
+        
+        def binary_search2(l, r, subset, target):
+            while l <= r:
+                mid = int((l+r)/2)
+                if float(subset[mid].value) == target:
+                    return mid
+                elif float(subset[mid].value) > target:
+                    r = mid-1
+                else:
+                    l = mid+1
+            return l
 
         if self.type == Type.categorical:
             if type(condition[0]) is float:
-                idx = binary_search1(0, len(subset)-1, subset, condition[0])
+                idx = binary_search2(0, len(subset)-1, subset, condition[0])
                 for i in range(idx, len(subset)):
                     if condition[0] <= float(subset[i].value) < condition[1]:
                         res.append(subset[i])
@@ -41,8 +52,6 @@ class Condition(object):
                 idx = 0
                 for target in sorted(condition):
                     idx = binary_search1(idx, len(subset)-1, subset, target)
-                    if idx < len(subset):
-                        print(subset[idx].dimension+','+str(idx)+','+subset[idx].value)
                     if idx < len(subset) and subset[idx].value == target:
                         res.append(subset[idx])
         elif self.type == Type.temporal:
