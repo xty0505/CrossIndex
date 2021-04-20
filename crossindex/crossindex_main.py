@@ -233,6 +233,7 @@ class CrossIndex(object):
                     for ds in validDSs:
                         tmpDS.extend(where.binary_match(ds.subSet))
                 validDSs = tmpDS
+                query.cache[i] = tmpDS
 
                 # 当前 where 条件筛选完后如果没有后续条件直接break
                 n = n - 1
@@ -332,41 +333,75 @@ class CrossIndex(object):
         query.compute()
         return query.result.output_xy()
 
-    def backward_query2(self, query, conditions):
-        validDSs = []
+    def backward_query2(self, query, other):
+        conditions = other.wheres
+        idx, flag = query.get_deepest_overlapped_idx(conditions)
+        if idx not in query.cache.keys():
+            return self.query(other)
+
+        n = other.where_n
         xyMap = defaultdict(lambda: [])
-
-        for i in len(conditions):
+        validDSs = query.cache[idx]
+        # 该层的实际 validDSs 需要再用新谓词筛选一次
+        if flag:
             tmp = []
+            for ds in validDSs:
+                if conditions[idx].match(ds):
+                    tmp.append(ds)
+            validDSs = tmp
+        # 之前重叠的查询空间记录下来
+        for i in range(idx+1):
+            if i in query.cache.keys():
+                other.cache[i] = query.cache[i]
+                n -= 1
+        for i in range(idx+1, len(conditions)):
+            tmpDS = []
+            where = conditions[i]
+            # 当前 dimension 无where条件
+            if where.value is None:
+                for ds in validDSs:
+                    tmpDS.extend(ds.subSet)
+                validDSs = tmpDS
+                continue
 
-            condition = conditions[i]
-            next_condition = conditions[i+1] if (i+1) < len(conditions) else None
+            # numerical 可能会出现 condition 落在 bin_boundary 中间的情况
+            if self.types[i] == Type.numerical:
+                for ds in validDSs:
+                    for sub in ds.subSet:
+                        is_match, new_sub = where.match(sub, self.R)
+                        if is_match:
+                            if new_sub is not None:
+                                tmpDS.append(new_sub)
+                            else:
+                                tmpDS.append(sub)
+            else:
+                for ds in validDSs:
+                    for sub in ds.subSet:
+                        if where.match(sub):
+                            tmpDS.append(sub)
+            validDSs = tmpDS
+            other.cache[i] = validDSs
 
-            idx = self.dimensions.index(condition.dimension)
-            for ds in query.validDimensionSetLayers[idx]:
-                if condition.match(ds):
-                    validDSs.append(ds)
-            if next_condition is not None:
-                while validDSs[0].dimension != next_condition.dimension:
-                    for ds in validDSs:
-                        tmp.extend(ds.subSet)
-                    validDSs = tmp
+            # 已经空集则返回
+            if len(validDSs) == 0:
+                return other.result.output_xy()
+            n -= 1
+            if n == 0:
+                break
 
-        if len(validDSs) == 0:
-            return query.result.output_xy()
         # group by
         valid_dimension_i = self.dimensions.index(validDSs[0].dimension)
-        groupby_i = self.dimensions.index(query.groupby)
+        groupby_i = self.dimensions.index(other.groupby)
         if valid_dimension_i == groupby_i:
             for ds in validDSs:
                 xyMap[ds.value].append(ds.interval)
         elif valid_dimension_i > groupby_i:
             for ds in validDSs:
-                p = ds.find_parent(query.groupby)
+                p = ds.find_parent(other.groupby)
                 if p is not None:
                     xyMap[p.value].append(ds.interval)
         else:
-            while validDSs[0].dimension != query.groupby:
+            while validDSs[0].dimension != other.groupby:
                 tmpDS = []
                 for ds in validDSs:
                     tmpDS.extend(ds.subSet)
@@ -374,12 +409,12 @@ class CrossIndex(object):
             for ds in validDSs:
                 xyMap[ds.value].append(ds.interval)
 
-        query.validDSs = validDSs
+        other.validDSs = validDSs
         for key in sorted(xyMap.keys()):
-            query.result.x_data.append(key)
-            query.result.y_intervals.append(xyMap[key])
-        query.compute()
-        return query.result.output_xy()
+            other.result.x_data.append(key)
+            other.result.y_intervals.append(xyMap[key])
+        other.compute()
+        return other.result.output_xy()
 
     def output(self):
         for ds in self.dimensionSetLayers[0]:
@@ -442,13 +477,15 @@ def execute_direct_query(crossindex, sql):
 
     return q
 
-def execute_backward_query(crossindex, sql, new_conditions):
-    q = Query(cube=crossindex)
-    q.parse(sql)
+def execute_backward_query(crossindex, sql, new_sql):
+    cached_q = Query(cube=crossindex)
+    cached_q.parse(sql)
+    crossindex.query(cached_q)
 
-    crossindex.query(q)
+    q = Query(cube=crossindex)
+    q.parse(new_sql)
     start = time.time()
-    crossindex.backward_query(q, new_conditions)
+    crossindex.backward_query2(cached_q, q)
     end = time.time()
     q.result.pretty_output()
     print('backward query: ' + str(end - start))
@@ -500,11 +537,10 @@ if __name__ == '__main__':
 
     # sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2020-05-05' and '2020-06-05' AND origin = 'KMSP' GROUP BY day"
     # q = execute_direct_query(crossindex, sql)
-    sql = "SELECT FLOOR(DEP_TIME/1) AS bin_DEP_TIME,  COUNT(*) as count FROM flights WHERE (DISTANCE >= 985.7142857142858 AND DISTANCE < 1200 AND AIR_TIME >= 122.85714285714286 AND AIR_TIME < 500) GROUP BY bin_DEP_TIME"
-    backward_sql = "SELECT FLOOR(DEP_TIME/1) AS bin_DEP_TIME,  COUNT(*) as count FROM flights WHERE (DISTANCE >= 985.7142857142858 AND DISTANCE < 1200) GROUP BY bin_DEP_TIME"
-    execute_direct_query(crossindex, sql)
-    execute_backward_query(crossindex, backward_sql, [Condition('AIR_TIME', [122.85714285714286, 500], Type.categorical)])
-
+    sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 8 GROUP BY time"
+    backward_sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 5 AND time >= 640 AND time < 674 GROUP BY time"
+    execute_direct_query(crossindex, backward_sql)
+    execute_backward_query(crossindex, sql, backward_sql)
 
 
 ''' 

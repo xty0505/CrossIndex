@@ -175,7 +175,7 @@ class Query(object):
             c = Condition(dimension=d)
             self.wheres.append(c)
         self.validDSs = []
-        self.validDimensionSetLayers = []
+        self.cache = {}
 
     def set_cube(self, cube):
         self.cube = cube
@@ -334,36 +334,46 @@ class Query(object):
             self.where_n = self.where_n + 1
         self.wheres[index] = condition
 
-    def calculate_dimensionSetLayers(self):
-        valid_idx = self.cube.dimensions.index(self.validDSs[0].dimension)
-        idx = 0
-        while valid_idx > idx:
-            tmp = []
-            for ds in self.validDSs:
-                p = ds.find_parent(self.cube.dimensions[idx])
-                if p is not None:
-                    tmp.append(p)
-                    self.validDimensionSetLayers.append(list(set(tmp)))
-            idx += 1
-        # valid_idx == idx
-        self.validDimensionSetLayers.append(self.validDSs)
-        idx += 1
-        # valid_idx < idx
-        DSs_tmp = self.validDSs
-        while idx < len(self.cube.dimensions):
-            tmp = []
-            for ds in DSs_tmp:
-                tmp.extend(ds.subSet)
-                self.validDimensionSetLayers.append(tmp)
-                DSs_tmp = tmp
-            idx += 1
-
     def clear_conditions(self):
         self.wheres = []
         for d in self.cube.dimensions:
             c = Condition(dimension=d)
             self.wheres.append(c)
         self.where_n = 0
+
+    # 返回最后一个重叠 dimension 的下标
+    # 第二个返回参数代表最后一个 dimension 的新谓词是否在原谓词上进行缩小
+    def get_deepest_overlapped_idx(self, new_conditions):
+        for i in range(len(new_conditions)):
+            old_condition = self.wheres[i]
+            new_condition = new_conditions[i]
+            if old_condition.value is None and new_condition.value is None:
+                continue
+            elif old_condition.value is None or new_condition.value is None:
+                return i-1, False
+            elif new_condition.value != old_condition.value:
+                flag = False
+                if old_condition.type == Type.categorical:
+                    if type(old_condition.value[0]) is float and \
+                            old_condition.value[0] <= new_condition.value[0] \
+                            and new_condition.value[1] <= old_condition.value[1]:
+                        flag = True
+                    elif set(new_condition.value) <= set(old_condition.value):
+                        flag = True
+                elif old_condition.type == Type.temporal:
+                    if old_condition.value[0] <= new_condition.value[0] and new_condition.value[1] <= old_condition.value[1]:
+                        flag = True
+                elif old_condition.type == Type.spatial:
+                    if old_condition.value.find(new_condition.value) > 0:
+                        flag = True
+                elif old_condition.type == Type.numerical:
+                    if old_condition.value[0] <= new_condition.value[0] and new_condition.value[1] <= old_condition.value[1]:
+                        flag = True
+
+                if flag:
+                    return i, True
+                return i-1, False
+        return len(new_conditions)-1, False
 
     def is_backward_query(self, sql):
         if self.where_n == 0:
