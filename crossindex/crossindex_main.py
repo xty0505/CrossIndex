@@ -196,11 +196,16 @@ class CrossIndex(object):
     def query(self, query):
         # 记录当前循环中符合之前 where 条件即有效的 DimensionSet
         validDSs = []
-        root = DimensionSet('root', -1, 'all', None)
-        root.subSet = self.dimensionSetLayers[0]
-        validDSs.append(root)
         xyMap = defaultdict(lambda: [])
         n = query.where_n
+        start_idx = query.get_start_condition()
+        if start_idx == 0:
+            start = DimensionSet('root', -1, 'all', None)
+            root.subSet = self.dimensionSetLayers[0]
+        else:
+            start = self.dimensionSetLayers[start_idx-1]
+        validDSs.extend(start)
+
         # no wheres
         if n == 0:
             for i in range(len(self.dimensions)):
@@ -208,7 +213,7 @@ class CrossIndex(object):
                     for ds in self.dimensionSetLayers[i]:
                         xyMap[ds.value].append(ds.interval)
         else:
-            for i in range(len(self.dimensions)):
+            for i in range(start_idx ,len(self.dimensions)):
                 tmpDS = []
                 where = query.wheres[i]
 
@@ -231,7 +236,10 @@ class CrossIndex(object):
                                     tmpDS.append(sub)
                 else:
                     for ds in validDSs:
-                        tmpDS.extend(where.binary_match(ds.subSet))
+                        for sub in ds.subSet:
+                            if where.match(sub):
+                                tmpDS.append(sub)
+                        # tmpDS.extend(where.binary_match(ds.subSet))
                 validDSs = tmpDS
                 query.cache[i] = tmpDS
 
@@ -535,12 +543,10 @@ if __name__ == '__main__':
             crossindex.build_parallel(args['input_dir'], args['delimiter'], args)
         crossindex.save(args['cube_dir'])
 
-    # sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2020-05-05' and '2020-06-05' AND origin = 'KMSP' GROUP BY day"
-    # q = execute_direct_query(crossindex, sql)
-    sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 8 GROUP BY time"
-    backward_sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 5 AND time >= 640 AND time < 674 GROUP BY time"
-    execute_direct_query(crossindex, backward_sql)
-    execute_backward_query(crossindex, sql, backward_sql)
+    sql = "SELECT origin AS bin_origin,  COUNT(*) as count FROM flights_covid WHERE (destination IN ('KNFW','YWLM','YMPC','FA37') AND typecode IN ('CL85','BE40','BE35','EC30')  AND callsign IN ('PDT4899','SWA2936','UAE29','BOV644')) GROUP BY bin_origin"
+    # backward_sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2020-05-05' and '2020-05-25' AND (origin IN ['KMSP', 'KHND']) GROUP BY day"
+    execute_direct_query(crossindex, sql)
+    # execute_backward_query(crossindex, sql, backward_sql)
 
 
 ''' 
@@ -568,7 +574,10 @@ flights_1M_categorical.csv args:
 
 traffic_categorical.csv args:
     --input-dir data/traffic.csv --name traffic_categorical --dimensions link_id vehicle_num velocity_ave time --types categorical categorical categorical categorical --delimiter \t
-    
+    sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 8 GROUP BY time"
+    backward_sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 5 AND time >= 640 AND time < 674 GROUP BY time"
+    execute_direct_query(crossindex, backward_sql)
+    execute_backward_query(crossindex, sql, backward_sql)
     
 traffic_numerical.csv args:
     --input-dir data/traffic.csv --name traffic_numerical --dimensions link_id vehicle_num velocity_ave time --types categorical numerical numerical categorical --delimiter \t

@@ -247,8 +247,8 @@ class Query(object):
                     condition = Condition(dimension, value, t)
                 # in
                 elif where.find('IN') != -1:
-                    dimension = where.split('IN')[0].strip()[1:]
-                    value = where.split('IN')[1].replace('\'', '').strip()[1:-2].replace(' ', '').split(',')
+                    dimension = where.split('IN')[0].strip().strip('(')
+                    value = where.split('IN')[1].replace('\'', '').strip().strip(')')[1:-1].replace(' ', '').split(',')
                     condition = Condition(dimension, value, Type.categorical)
                 # between
                 elif where.find('BETWEEN') != -1:
@@ -333,6 +333,13 @@ class Query(object):
         if self.wheres[index].value is None:
             self.where_n = self.where_n + 1
         self.wheres[index] = condition
+
+    def get_start_condition(self):
+        if self.where_n == 0:
+            return -1
+        for i,w in enumerate(self.wheres):
+            if w.value is not None:
+                return i
 
     def clear_conditions(self):
         self.wheres = []
