@@ -4,6 +4,7 @@ from collections import defaultdict
 
 from joblib import Parallel, delayed
 from tqdm import tqdm
+import numpy as np
 
 from calc_type import *
 from dispatcher import Dispatcher
@@ -17,6 +18,7 @@ class CrossIndex(object):
         self.dimensions = dimensions
         self.types = [Type.getType(t) for t in types]
         self.dimensionSetLayers = []
+        self.index = pd.DataFrame() # csv form
         self.ready = False
         self.pbar = None
 
@@ -193,6 +195,65 @@ class CrossIndex(object):
         end = time.time()
         print('build time:' + str(end - start))
 
+    def build_csv(self, path, delimiter, options):
+        self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
+        print('pd.read_csv finished.')
+        # sorting
+        start = time.time()
+        print('sorting...')
+        self.R = self.R.sort_values(self.dimensions)
+        self.R.reset_index(drop=True, inplace=True)
+        print('sorting done.')
+        print('sorting time: '+str(time.time()-start))
+
+        def calInterval(row):
+            return str(row.min())+','+str(row.max())
+
+        # groupby
+        self.pbar = tqdm(desc='CrossIndex Build', total=len(self.R) * len(self.dimensions))
+        crossindex = self.R
+        groupby = []
+        crossindex['idx'] = crossindex[self.dimensions[0]].index.astype(int)
+        for i in range(len(self.dimensions)):
+            groupby.append(self.dimensions[i])
+            tmp = crossindex.groupby(groupby).agg(
+                interval = ('idx', calInterval),
+            ).reset_index()
+            crossindex = crossindex.merge(tmp, how='left', left_on=groupby, right_on=groupby)
+            crossindex.rename(columns={'interval':'interval'+str(i)}, inplace=True)
+            self.pbar.update(len(crossindex))
+        crossindex.drop(columns=['idx'], inplace=True)
+        crossindex.to_csv(os.path.join(options['cube_dir'], self.name + '.csv'), index=False, encoding='utf-8')
+
+        self.pbar.close()
+        self.ready = True
+        self.index = crossindex
+        end = time.time()
+        print('build time:' + str(end - start))
+
+    def query_csv(self, query, search_space=None, index=0):
+        res = search_space
+        if res is None:
+            res = self.index
+        idx = index
+        for i in range(idx, len(query.wheres)):
+            predicte = query.wheres[i]
+            if predicte.value is None:
+                continue
+            res = predicte.match_csv(res, self.dimensions[i])
+            query.cache[i] = res
+            idx = i
+
+        xyMap = defaultdict(lambda: [])
+        idx = self.dimensions.index(query.groupby) if self.dimensions.index(query.groupby)>idx else idx
+        for row in res[[query.groupby, 'interval'+str(idx)]].itertuples():
+            xyMap[str(row[1])].append(Interval(row[2].split(',')[0], row[2].split(',')[1]))
+        for key in sorted(xyMap.keys()):
+            query.result.x_data.append(key)
+            query.result.y_intervals.append(xyMap[key])
+        query.compute()
+        return query.result.output_xy()
+
     def query(self, query):
         # 记录当前循环中符合之前 where 条件即有效的 DimensionSet
         validDSs = []
@@ -201,7 +262,7 @@ class CrossIndex(object):
         start_idx = query.get_start_condition()
         if start_idx == 0:
             start = DimensionSet('root', -1, 'all', None)
-            root.subSet = self.dimensionSetLayers[0]
+            start.subSet = self.dimensionSetLayers[0]
         else:
             start = self.dimensionSetLayers[start_idx-1]
         validDSs.extend(start)
@@ -277,6 +338,22 @@ class CrossIndex(object):
             query.result.y_intervals.append(xyMap[key])
         query.compute()
         return query.result.output_xy()
+
+    def backward_query_csv(self, query, other):
+        conditions = other.wheres
+        idx, flag = query.get_deepest_overlapped_idx(conditions)
+        if idx not in query.cache.keys():
+            return self.query_csv(query)
+        if flag:
+            for i in range(idx):
+                if i in query.cache.keys():
+                    other.cache[i] = query.cache[i]
+            self.query_csv(other, query.cache[idx], idx)
+        else:
+            for i in range(idx+1):
+                if i in query.cache.keys():
+                    other.cache[i] = query.cache[i]
+            self.query_csv(other, other.cache[idx], idx+1)
 
     def backward_query(self, query, conditions):
         j = 0
@@ -477,7 +554,7 @@ def execute_direct_query(crossindex, sql):
     q.parse(sql)
 
     start = time.time()
-    crossindex.query(q)
+    crossindex.query_csv(q)
     end = time.time()
 
     q.result.pretty_output()
@@ -488,12 +565,12 @@ def execute_direct_query(crossindex, sql):
 def execute_backward_query(crossindex, sql, new_sql):
     cached_q = Query(cube=crossindex)
     cached_q.parse(sql)
-    crossindex.query(cached_q)
+    crossindex.query_csv(cached_q)
 
     q = Query(cube=crossindex)
     q.parse(new_sql)
     start = time.time()
-    crossindex.backward_query2(cached_q, q)
+    crossindex.backward_query_csv(cached_q, q)
     end = time.time()
     q.result.pretty_output()
     print('backward query: ' + str(end - start))
@@ -512,6 +589,7 @@ if __name__ == '__main__':
 
     argparser.add_argument('--delimiter', dest='delimiter', help='delimiter of csv file', default=',')
     argparser.add_argument('--single', dest='single', action='store_true', help='whether to build in single thread', default=False)
+    argparser.add_argument('--csv', dest='csv', action='store_true', help="whether to use crossindex in csv form", default=True)
 
     # some options for different dimension type
     # temporal
@@ -532,21 +610,30 @@ if __name__ == '__main__':
 
     # initialization
     crossindex =CrossIndex(args['name'], args['dimensions'], args['types'])
-    if os.path.exists(args['cube_dir'] + args['name'] + '.cube'):
-        crossindex.load(args['cube_dir'], args['name'])
-    else:
-        if args['single'] == True:
-            crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
-            crossindex.build(args['input_dir'], args['delimiter'], args)
+    if args['csv']:
+        if os.path.exists(args['cube_dir'] + args['name'] + '.csv'):
+            crossindex.R = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '.csv'), encoding='utf-8', delimiter=',')
+            crossindex.index = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '.csv'), encoding='utf-8', delimiter=args['delimiter'])
         else:
-            crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
-            crossindex.build_parallel(args['input_dir'], args['delimiter'], args)
-        crossindex.save(args['cube_dir'])
+            crossindex.build_csv(args['input_dir'], args['delimiter'], args)
+    else:
+        if os.path.exists(args['cube_dir'] + args['name'] + '.csv'):
+            crossindex.load(args['cube_dir'], args['name'])
+        else:
+            if args['single'] == True:
+                crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
+                crossindex.build(args['input_dir'], args['delimiter'], args)
+            else:
+                crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
+                crossindex.build_parallel(args['input_dir'], args['delimiter'], args)
+            crossindex.save(args['cube_dir'])
 
-    sql = "SELECT origin AS bin_origin,  COUNT(*) as count FROM flights_covid WHERE (destination IN ('KNFW','YWLM','YMPC','FA37') AND typecode IN ('CL85','BE40','BE35','EC30')  AND callsign IN ('PDT4899','SWA2936','UAE29','BOV644')) GROUP BY bin_origin"
-    # backward_sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2020-05-05' and '2020-05-25' AND (origin IN ['KMSP', 'KHND']) GROUP BY day"
-    execute_direct_query(crossindex, sql)
-    # execute_backward_query(crossindex, sql, backward_sql)
+    # sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2020-05-05' and '2020-06-05' AND origin = 'KMSP' GROUP BY day"
+    # q = execute_direct_query(crossindex, sql)
+    sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 8 GROUP BY time"
+    backward_sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 5 AND time >= 640 AND time < 674 GROUP BY time"
+    execute_direct_query(crossindex, backward_sql)
+    execute_backward_query(crossindex, sql, backward_sql)
 
 
 ''' 

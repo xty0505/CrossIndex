@@ -71,6 +71,17 @@ class Condition(object):
             print('numerical')
         return res
 
+    def match_csv(self, df, dimension):
+        condition = self.value if self.value.__class__ == list else [self.value]
+        if self.type == Type.categorical:
+            if type(condition[0]) is float:
+                return df[(df[dimension]>=condition[0])&(df[dimension]<condition[1])]
+            return df[df[dimension].isin(condition)]
+        elif self.type == Type.temporal:
+            return df[(df[dimension]>=condition[0])&(df[dimension]<=condition[1])]
+        elif self.type == Type.numerical:
+            return df[(df[dimension]>=condition[0])&(df[dimension]<condition[1])]
+
     def match(self, ds, R=None):
         value = ds.value
         condition = self.value if self.value.__class__ == list else [self.value]

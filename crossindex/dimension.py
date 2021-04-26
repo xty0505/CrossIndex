@@ -1,8 +1,8 @@
 class Interval(object):
     def __init__(self, begin, end):
-        self.begin = begin
-        self.end = end
-        self.count = end - begin + 1
+        self.begin = int(begin)
+        self.end = int(end)
+        self.count = self.end - self.begin + 1
 
     def compare(self, other):
         if self.begin == other.begin and self.end == other.end:
