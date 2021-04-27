@@ -211,7 +211,7 @@ class CrossIndex(object):
 
         # groupby
         self.pbar = tqdm(desc='CrossIndex Build', total=len(self.R) * len(self.dimensions))
-        crossindex = self.R
+        crossindex = self.R[self.dimensions]
         groupby = []
         crossindex['idx'] = crossindex[self.dimensions[0]].index.astype(int)
         for i in range(len(self.dimensions)):
@@ -223,7 +223,8 @@ class CrossIndex(object):
             crossindex.rename(columns={'interval':'interval'+str(i)}, inplace=True)
             self.pbar.update(len(crossindex))
         crossindex.drop(columns=['idx'], inplace=True)
-        crossindex.to_csv(os.path.join(options['cube_dir'], self.name + '.csv'), index=False, encoding='utf-8')
+        crossindex.to_csv(os.path.join(options['cube_dir'], self.name + '_csv.csv'), index=False, encoding='utf-8')
+        self.R.to_csv(os.path.join(options['cube_dir'], self.name + '.csv'), index=False, encoding='utf-8')
 
         self.pbar.close()
         self.ready = True
@@ -236,6 +237,7 @@ class CrossIndex(object):
         if res is None:
             res = self.index
         idx = index
+        start = time.time()
         for i in range(idx, len(query.wheres)):
             predicte = query.wheres[i]
             if predicte.value is None:
@@ -243,15 +245,20 @@ class CrossIndex(object):
             res = predicte.match_csv(res, self.dimensions[i])
             query.cache[i] = res
             idx = i
+        print('search time: '+str(time.time()-start))
 
         xyMap = defaultdict(lambda: [])
         idx = self.dimensions.index(query.groupby) if self.dimensions.index(query.groupby)>idx else idx
+        start = time.time()
         for row in res[[query.groupby, 'interval'+str(idx)]].itertuples():
             xyMap[str(row[1])].append(Interval(row[2].split(',')[0], row[2].split(',')[1]))
+        print('xpMap collection time:' + str(time.time() - start))
+        start = time.time()
         for key in sorted(xyMap.keys()):
             query.result.x_data.append(key)
             query.result.y_intervals.append(xyMap[key])
         query.compute()
+        print('compute time: '+str(time.time()-start))
         return query.result.output_xy()
 
     def query(self, query):
@@ -343,7 +350,8 @@ class CrossIndex(object):
         conditions = other.wheres
         idx, flag = query.get_deepest_overlapped_idx(conditions)
         if idx not in query.cache.keys():
-            return self.query_csv(query)
+            self.query_csv(other)
+            return False
         if flag:
             for i in range(idx):
                 if i in query.cache.keys():
@@ -354,6 +362,7 @@ class CrossIndex(object):
                 if i in query.cache.keys():
                     other.cache[i] = query.cache[i]
             self.query_csv(other, other.cache[idx], idx+1)
+        return True
 
     def backward_query(self, query, conditions):
         j = 0
@@ -611,10 +620,11 @@ if __name__ == '__main__':
     # initialization
     crossindex =CrossIndex(args['name'], args['dimensions'], args['types'])
     if args['csv']:
-        if os.path.exists(args['cube_dir'] + args['name'] + '.csv'):
+        if os.path.exists(args['cube_dir'] + args['name'] + '_csv.csv'):
             crossindex.R = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '.csv'), encoding='utf-8', delimiter=',')
-            crossindex.index = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '.csv'), encoding='utf-8', delimiter=args['delimiter'])
+            crossindex.index = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '_csv.csv'), encoding='utf-8', delimiter=args['delimiter'])
         else:
+            crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
             crossindex.build_csv(args['input_dir'], args['delimiter'], args)
     else:
         if os.path.exists(args['cube_dir'] + args['name'] + '.csv'):
@@ -628,12 +638,10 @@ if __name__ == '__main__':
                 crossindex.build_parallel(args['input_dir'], args['delimiter'], args)
             crossindex.save(args['cube_dir'])
 
-    # sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2020-05-05' and '2020-06-05' AND origin = 'KMSP' GROUP BY day"
-    # q = execute_direct_query(crossindex, sql)
-    sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 8 GROUP BY time"
-    backward_sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 5 AND time >= 640 AND time < 674 GROUP BY time"
-    execute_direct_query(crossindex, backward_sql)
-    execute_backward_query(crossindex, sql, backward_sql)
+    sql = "SELECT typecode AS bin_typecode,  COUNT(*) as count FROM flights_covid WHERE (typecode IN ('T38','CVLT','B773','SC7','FURY','A346','A124','P180','LJ24','S64','CRJ7','PAY4','BN2T','ST75','SB20','D328','L8','DH82','E45X','A321','H900','SR20','A319','PA28A','C55B','B350','C150','D11','A21N','C414','C25A','F70','BE40','C650','GX','GALX','A148','LJ31','P28U','CN35','A343','F9LX','BD-100-1A10 Challenger 350','B733','B789','AC90','KODI','PA27','FK9','B190','B463','B748','CL64','PA44','TWST','F100','FA20','DR40','CRJ2','EC20','B77W','DHC2','J328','C550','GLF5','G350','AT46','C56X','BCS3','PAY3','B505','B78X','A359','T34P','GA8','R22','S22T','B736','E35L','S76','RJ85','LJ75','BALL','A189','G650','TEX2','BE20','UH1','C30J','B212','F2EX','LJ40','E170','C42','B744','A306','C182','F9DX','MD90','L39') AND icao24 IN ('c06543','89632f','a0f8f1','a880ab','39b032','acf894','a71b6d','a9ad36','44cdc8','a7d66e','ab64b8','a9807d','c008f0','4409ad','7c7fe3','5110f0','3d28c0','ac35ef','a5c564','80072a','4ca947','aaa438','a6c88e','478854','add0b4','a24aca','8850ae','a7ddd3','847183','a948c4','300067','ab5eb2','71c260','a79898','a9cf55','800cba','00ae62','abda7e','44ccc7','4cc2c5','505e95','ae509e','4ca63b','a6e480','a2deb3','a7debf','405bfc','a4efe4','847884','a2dda1','4ca56f','acc6d1','a33272','406b48','a030d5','4ca88f','a0bf26','c04688','acd8ac','ad18cf','ada6b9','a83ef2','a8638a','ac712d','a53b69','acc9d0','a61797','a20e38','34454a','a12625','89649f','7c7a39','400d8c','aa0d0d','ad8881','aaf53a','a657bf','aa1f97','440185','aacd96','467895','aca950','ad9c8f','c0172e','4ca730','a769d9','a041ca','a258b7','3c6678','ac9ad8','8004dd','a99b6a','a615d0','abc0c1','abf32f','a6e4e4','406071','7c7ab0','acd486','a0fe7a') AND registration IN ('VT-WGR','RA-85686','N953AN','VH-ING','EI-DLE','D-MEID','N36272','N75925','N22NY','N792SW','B-LJJ','EI-DLD','EI-DPI','N506DN','VT-EXB','ZK-NEA','EC-JAZ','N353FS','N511UW','TC-LKC','VT-WGV','CC-BBB','VH-YQS','N922QS','A54-015','N913FX','N732US','VT-ANT','G-LSAC','N706CK','N147PQ','N409MC','9M-AJE','N655UA','N561SR','N762SK','N774DE','N61UP','N830AW','EI-DPX','N588NW','N1PG','D-AALE','9V-OJG','N750GX','N280WN','N7718B','D-CESA','G-ZBKJ','N8606C','ZS-ZWS','N396LG','N887DN','N381DN','VH-EQH','N502MJ','N930AT','G-EZTC','N255SD','N818MD','N207CF','EI-DSA','N761FE','N786SW','N253SA','OO-TCH','G-DHLF','C-FGEI','N7818L','VH-VZM','N400FX','D-AIBH','N386ME','HZ-AK18','N785MM','VN-A608','A6-EOO','LN-TUF','VH-NEQ','N806JB','N607NK','D-CAWR','N254SY','EC-LVS','HB-IJD','N320NB','N834DN','RA-82081','N524JB','9N-AKW','EI-FIT','N194LH','N328NV','N225DB','N256SY','VH-ZSM','HB-JVN','LX-VCF','OK-OKP','D-ATYC') AND origin IN ('YCES','VMMC','EGHN','82NC','KFFZ','LSZV','LFHC','EGBG','KWWD','KNBJ','EFTP','EGJB','YWOM','KMMU','CYYB','3PS4','KOQU','KLDJ','KSJC','YWSL','LILG','KMTO','VECC','EGLF','2IS9','KAXQ','EGKK','LSZM','VOMM','ESMT','EDJA','KTPF','SBGR','KXNA','KMAE','1GA2','KMKE','YTDN','EDDP','OERK','KDVT','GCLP','PA68','KROC','IL95','KONM','EGBJ','LGKY','KNIP','KLNK','KHMT','KDAA','KJHW','LIRP','KPWK','EICK','LIBG','FL35','KTTN','24XA','8OA7','KEWR','LOAG','LSGR','RJTT','LEBL','WMKK','NK43','NZWN','RCMQ','ESDF','77PA','KBED','EKAH','ETAR','LSZB','KPIT','KMRY','EGNP','KJVL','XA78','PAEN','EGPK','CYYJ','EBCI','UKKK','KBVY','EIKN','KJAX','LICJ','35CN','OL05','EDKM','YSDU','WSSS','84OH','LPMA','KNGP','ESTA','KBLV') AND destination IN ('EGNS','0GE0','KAVX','KHEE','71KY','EDWC','SEQM','KTEB','NK71','K07R','EDCV','SC32','LL22','EDNZ','LERT','LZMA','LFNR','RPLC','LFEY','II13','KU30','00KS','47AZ','KNBJ','97TS','EDEL','K29M','NM89','LHTM','UT13','EDDK','KTYS','PAED','EDXW','KERI','KIAH','EBHN','K6I6','KBNW','LKVO','0WI6','UKKK','SBMT','KWRI','EGSX','EBCI','LKNY','2FD6','SKBO','KCGF','KAXH','CYCD','K1H2','7PA1','KRND','NZAA','4WA4','KNGU','KAJO','LCLK','KMCW','LFPO','K9F9','73MU','57AZ','TS00','MU68','50PA','KPHL','EBLE','KT54','KPVD','MA97','K4A0','YPAD','LFPL','KPTD','KPSM','KOJC','EYVI','NK04','VHHH','ESGG','IN60','LSZM','LPIN','K1H0','ESNZ','KBUR','KOLU','LFON','EDKM','LTBW','NK05','KJVY','KTMB','FA40','CSE3','VG43','MDBG')) GROUP BY bin_typecode"
+    # backward_sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 5 AND time >= 640 AND time < 674 GROUP BY time"
+    execute_direct_query(crossindex, sql)
+    # execute_backward_query(crossindex, sql, backward_sql)
 
 
 ''' 
