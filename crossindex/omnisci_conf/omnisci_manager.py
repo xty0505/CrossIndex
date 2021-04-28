@@ -4,10 +4,10 @@ from pymapd import connect
 class OmnisciManager(object):
     def __init__(self, properties=None):
         if properties is None:
-            properties['user'] = 'admin'
-            properties['password'] = 'HyperInteractive'
-            properties['host'] = 'localhost'
-            properties['dbname'] = 'crossindex'
+            properties = {'user': 'admin',
+                          'password': 'HyperInteractive',
+                          'host': 'localhost',
+                          'dbname': 'crossindex'}
         self.user = properties['user']
         self.password = properties['password']
         self.host = properties['host']
