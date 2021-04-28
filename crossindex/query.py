@@ -296,6 +296,26 @@ class Query(object):
                     sum = sum + self.cube.R.iloc[interval.begin:interval.end + 1][self.measure].sum()
                 self.result.y_data.append(sum)
 
+    def get_query_index_sql(self, idx, tbname):
+        where_clause = ""
+        for i in range(idx+1):
+            where = self.wheres[i]
+            if where.value is not None:
+                value = where.value if where.value.__class__ == list else [where.value]
+                if where.type == Type.categorical:
+                    if type(value[0]) is float:
+                        where_clause += "{0} >= {1} and {0} < {2} AND ".format(where.dimension, str(value[0]), str(value[1]))
+                    else:
+                        where_clause += "{0} IN ({1}) AND ".format(where.dimension, ','.join(["'%s'" % x for x in value]))
+                elif where.type == Type.numerical:
+                    where_clause += "{0} >= {1} and {0} < {2} AND ".format(where.dimension, str(value[0]), str(value[1]))
+                elif where.type == Type.temporal:
+                    where_clause += "{0} >= {1} and {0} < {2} AND ".format(where.dimension, str(value[0]), str(value[1]))
+        where_clause = where_clause[:where_clause.rfind(" AND ")]
+        sql = "SELECT * FROM {0} WHERE {1}".format(tbname, where_clause)
+        return sql, len(where_clause) > 0
+
+
     def get_geo_result(self, limit):
         max = 0
         data = []
