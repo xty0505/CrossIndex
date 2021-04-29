@@ -22,7 +22,8 @@ class CrossIndex(object):
         self.index = pd.DataFrame() # csv form
         self.ready = False
         self.pbar = None
-        if use_omnisci:
+        self.use_omnisci = use_omnisci
+        if self.use_omnisci:
             self.omnisci = OmnisciManager()
 
     def save(self, path):
@@ -244,9 +245,12 @@ class CrossIndex(object):
         if self.use_omnisci:
             for i in range(idx, len(query.wheres)):
                 filtered_sql, flag = query.get_query_index_sql(i, self.name)
-                print("query index sql: " + filtered_sql)
                 if flag:
-                    res = self.omnisci.get_df(filtered_sql)
+                    print("query index sql: " + filtered_sql)
+                    try:
+                        res = self.omnisci.get_df(filtered_sql)
+                    except:
+                        res = pd.DateFrame(index=self.index.index)
                     query.cache[i] = res
                     idx = i
         else:
@@ -262,8 +266,13 @@ class CrossIndex(object):
         xyMap = defaultdict(lambda: [])
         idx = self.dimensions.index(query.groupby) if self.dimensions.index(query.groupby)>idx else idx
         start = time.time()
+        last_interval = []
         for row in res[[query.groupby, 'interval'+str(idx)]].itertuples():
-            xyMap[str(row[1])].append(Interval(row[2].split(',')[0], row[2].split(',')[1]))
+            cur = row[2].split(',')
+            if last_interval == cur:
+                continue
+            xyMap[str(row[1])].append(Interval(cur[0], cur[1]))
+            last_interval = cur
         print('xpMap collection time:' + str(time.time() - start))
         start = time.time()
         for key in sorted(xyMap.keys()):
@@ -650,11 +659,9 @@ if __name__ == '__main__':
             crossindex.save(args['cube_dir'])
 
     # sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2020-05-05' and '2020-06-05' AND origin = 'KMSP' GROUP BY day"
-    # q = execute_direct_query(crossindex, sql)
-    sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 8 GROUP BY time"
-    backward_sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 5 AND time >= 640 AND time < 674 GROUP BY time"
+    backward_sql = "SELECT icao24 AS bin_icao24,  COUNT(*) FROM flights_covid_10M WHERE (registration IN ('HB-ZQH','N8696E','PH-DKF','C-GJZY','N311PQ','PH-BXT','N10ST','N8611F','LX-RCV','N626NK','N522FE','N368FX','D-HSAB','N330NB','RA-09010','N261SY','C-FASP','N921AT','EI-ECM','N253NV','N956WN','N500PC','N197PQ','N314PQ') AND origin IN ('KCLT','UUMO','EGPF','EDBM','ULLI','49NY','KJFK','EHEH','KORF','KPVU','KHOU','KMSP','CYEG','KOPF','UUDD','KMCO','KPHX','CYXX','KFOK','LSZB','7PS7','RJBB') AND destination IN ('CYYC')) GROUP BY bin_icao24"
     execute_direct_query(crossindex, backward_sql)
-    execute_backward_query(crossindex, sql, backward_sql)
+    # execute_backward_query(crossindex, sql, backward_sql)
 
 
 ''' 
@@ -662,7 +669,7 @@ if __name__ == '__main__':
 flights_covid_10M.csv args:
     --input-dir data/Flights_covid/flights_covid.csv --cube-dir cube/Flights_covid/ --name flight_covid_10M 
     --dimensions callsign icao24 registration typecode origin destination day --types categorical categorical categorical categorical categorical categorical temporal
-    sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2019-05-05' and '2019-06-05' AND origin = 'KMSP' GROUP BY day"
+    sql = "SELECT day, COUNT(origin) FROM flights_covid WHERE day BETWEEN '2019-05-05' and '2019-06-05' AND origin = 'KMSP' GROUP BY day"
 
 bike_10M.csv args:
     --input-dir data/Bikes/Divvy_Trips.csv --name bike --dimensions geohash USER_TYPE START_TIME -types spatial categorical temporal

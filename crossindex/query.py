@@ -259,7 +259,7 @@ class Query(object):
                 # in
                 elif where.find('IN') != -1:
                     dimension = where.split('IN')[0].strip().strip('(')
-                    value = where.split('IN')[1].replace('\'', '').strip().strip(')')[1:-1].replace(' ', '').split(',')
+                    value = where.split('IN')[1].replace('\'', '').strip().strip(')')[1:].replace(' ', '').split(',')
                     condition = Condition(dimension, value, Type.categorical)
                 # between
                 elif where.find('BETWEEN') != -1:
@@ -298,6 +298,8 @@ class Query(object):
 
     def get_query_index_sql(self, idx, tbname):
         where_clause = ""
+        if self.wheres[idx].value is None:
+            return "", False
         for i in range(idx+1):
             where = self.wheres[i]
             if where.value is not None:
@@ -312,8 +314,8 @@ class Query(object):
                 elif where.type == Type.temporal:
                     where_clause += "{0} >= {1} and {0} < {2} AND ".format(where.dimension, str(value[0]), str(value[1]))
         where_clause = where_clause[:where_clause.rfind(" AND ")]
-        sql = "SELECT * FROM {0} WHERE {1}".format(tbname, where_clause)
-        return sql, len(where_clause) > 0
+        sql = "SELECT {0} FROM {1} WHERE {2}".format(self.groupby, tbname, where_clause)
+        return sql, True
 
 
     def get_geo_result(self, limit):
