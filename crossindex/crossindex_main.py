@@ -18,6 +18,9 @@ class CrossIndex(object):
         self.name = name
         self.dimensions = dimensions
         self.types = [Type.getType(t) for t in types]
+        self.bin_width = []
+        self.bin_count = []
+        self.offset = {}
         self.dimensionSetLayers = []
         self.index = pd.DataFrame() # csv form
         self.ready = False
@@ -103,6 +106,11 @@ class CrossIndex(object):
                 last_l, line = self.recursiveLoad(f, line, l)
         self.dimensionSetLayers[last_l - 1][-1].subSet = subSet
         return last_l - 1, ''
+
+    def load_csv(self, args):
+        self.adjust_by_cardinality(args['cube_dir']+args['name']+'.csv', ',', reverse=False)
+        self.R = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '.csv'), encoding='utf-8')
+        self.index = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '_csv.csv'), encoding='utf-8')
 
     def build(self, path, delimiter, options):
         start = time.time()
@@ -200,12 +208,19 @@ class CrossIndex(object):
         print('build time:' + str(end - start))
 
     def build_csv(self, path, delimiter, options):
-        self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
-        print('pd.read_csv finished.')
+        # self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
+        # print('pd.read_csv finished.')
         # sorting
         start = time.time()
         print('sorting...')
-        self.R = self.R.sort_values(self.dimensions)
+        sortby = []
+        to_drop = []
+        for i in range(len(self.dimensions)):
+            sortby.append(self.dimensions[i])
+            if self.types[i] == Type.numerical:
+                self.R[self.dimensions[i]+'_bin'] = (self.R[self.dimensions[i]]-self.offset[self.dimensions[i]])//self.bin_width[i]
+                to_drop.append(self.dimensions[i]+'_bin')
+        self.R = self.R.sort_values(to_drop+sortby) # 先分组有序，然后组内有序
         self.R.reset_index(drop=True, inplace=True)
         print('sorting done.')
         print('sorting time: '+str(time.time()-start))
@@ -219,6 +234,8 @@ class CrossIndex(object):
         groupby = []
         crossindex['idx'] = crossindex[self.dimensions[0]].index.astype(int)
         for i in range(len(self.dimensions)):
+            if self.types[i] == Type.numerical:
+                crossindex[self.dimensions[i]] = self.R[self.dimensions[i]+'_bin'].astype(int)
             groupby.append(self.dimensions[i])
             tmp = crossindex.groupby(groupby).agg(
                 interval = ('idx', calInterval),
@@ -226,8 +243,11 @@ class CrossIndex(object):
             crossindex = crossindex.merge(tmp, how='left', left_on=groupby, right_on=groupby)
             crossindex.rename(columns={'interval':'interval'+str(i)}, inplace=True)
             self.pbar.update(len(crossindex))
+        
         crossindex.drop(columns=['idx'], inplace=True)
+        crossindex.drop_duplicates(inplace=True)
         crossindex.to_csv(os.path.join(options['cube_dir'], self.name + '_csv.csv'), index=False, encoding='utf-8')
+        self.R.drop(columns=to_drop, inplace=True)
         self.R.to_csv(os.path.join(options['cube_dir'], self.name + '.csv'), index=False, encoding='utf-8')
 
         self.pbar.close()
@@ -258,7 +278,11 @@ class CrossIndex(object):
                 predicte = query.wheres[i]
                 if predicte.value is None:
                     continue
-                res = predicte.match_csv(res, self.dimensions[i])
+                if self.types[i] == Type.numerical:
+                    res = predicte.match_csv(res, self.dimensions[i], self.offset[self.dimensions[i]], self.bin_width[i])
+                else:
+                    res = predicte.match_csv(res, self.dimensions[i])
+                # print(len(res))
                 query.cache[i] = res
                 idx = i
         print('search time: '+str(time.time()-start))
@@ -266,14 +290,12 @@ class CrossIndex(object):
         xyMap = defaultdict(lambda: [])
         idx = self.dimensions.index(query.groupby) if self.dimensions.index(query.groupby)>idx else idx
         start = time.time()
-        last_interval = []
-        for row in res[[query.groupby, 'interval'+str(idx)]].itertuples():
-            cur = row[2].split(',')
-            if last_interval == cur:
-                continue
-            xyMap[str(row[1])].append(Interval(cur[0], cur[1]))
-            last_interval = cur
+        interested = res[[query.groupby, 'interval'+str(idx)]].drop_duplicates(['interval'+str(idx)])
+        interested = interested.groupby(query.groupby)['interval'+str(idx)].apply(list)
+        for i,value in interested.items():
+            xyMap[str(i)] = [Interval(v.split(',')[0], v.split(',')[1]) for v in value] 
         print('xpMap collection time:' + str(time.time() - start))
+
         start = time.time()
         for key in sorted(xyMap.keys()):
             query.result.x_data.append(key)
@@ -371,7 +393,8 @@ class CrossIndex(object):
         conditions = other.wheres
         idx, flag = query.get_deepest_overlapped_idx(conditions)
         if idx not in query.cache.keys():
-            return self.query_csv(query)
+            self.query_csv(other)
+            return False
         if flag:
             for i in range(idx):
                 if i in query.cache.keys():
@@ -382,6 +405,7 @@ class CrossIndex(object):
                 if i in query.cache.keys():
                     other.cache[i] = query.cache[i]
             self.query_csv(other, other.cache[idx], idx+1)
+        return True
 
     def backward_query(self, query, conditions):
         j = 0
@@ -548,6 +572,7 @@ class CrossIndex(object):
         self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
         print('csv read fininshed.')
         cardinalities = {}
+        bin_width = {}
         for i in range(len(self.dimensions)):
             d = self.dimensions[i]
             if self.types[i] == Type.spatial:
@@ -555,13 +580,29 @@ class CrossIndex(object):
                 cardinality = len(geohash.unique())
                 key = ",".join(d)
                 cardinalities[key] = cardinality
-            else:
+                bin_width[key] = 1
+            elif self.types[i] == Type.categorical:
                 cardinality = len(self.R[d].unique())
                 cardinalities[d] = cardinality
-        return cardinalities
+                bin_width[d] = 1
+            elif self.types[i] == Type.numerical:
+                self.offset[d] = self.R[d].min()
+                total_width = self.R[d].max()-self.offset[d]
+                print(d + ' total width:', total_width)
+                if total_width <= 100:
+                    bin_width[d] = 2
+                elif total_width <=1000:
+                    bin_width[d] = 20
+                elif total_width <= 10000:
+                    bin_width[d] = 200
+                else:
+                    bin_width[d] = 1000
+                cardinalities[d] = total_width//bin_width[d]+1
+                
+        return cardinalities, bin_width
 
     def adjust_by_cardinality(self, path, delimiter, reverse):
-        cardinalities = self.calculate_cardinality(path, delimiter)
+        cardinalities, bin_width = self.calculate_cardinality(path, delimiter)
         cardinalities = sorted(cardinalities.items(), key=lambda kv: (kv[1], kv[0]), reverse=reverse)
         print(cardinalities)
 
@@ -573,6 +614,8 @@ class CrossIndex(object):
                 key = key.split(',')
             tmp_d.append(key)
             tmp_t.append(self.types[self.dimensions.index(key)])
+            self.bin_count.append(c[1])
+            self.bin_width.append(bin_width[key])
         self.dimensions = tmp_d
         self.types = tmp_t
 
@@ -598,9 +641,10 @@ def execute_backward_query(crossindex, sql, new_sql):
     q = Query(cube=crossindex)
     q.parse(new_sql)
     start = time.time()
-    crossindex.backward_query_csv(cached_q, q)
+    flag = crossindex.backward_query_csv(cached_q, q)
     end = time.time()
     q.result.pretty_output()
+    print(flag)
     print('backward query: ' + str(end - start))
 
     return q
@@ -641,8 +685,7 @@ if __name__ == '__main__':
     crossindex =CrossIndex(args['name'], args['dimensions'], args['types'], args['omnisci'])
     if args['csv']:
         if os.path.exists(args['cube_dir'] + args['name'] + '_csv.csv'):
-            crossindex.R = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '.csv'), encoding='utf-8', delimiter=',')
-            crossindex.index = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '_csv.csv'), encoding='utf-8', delimiter=args['delimiter'])
+            crossindex.load_csv(args)
         else:
             crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
             crossindex.build_csv(args['input_dir'], args['delimiter'], args)
@@ -658,10 +701,10 @@ if __name__ == '__main__':
                 crossindex.build_parallel(args['input_dir'], args['delimiter'], args)
             crossindex.save(args['cube_dir'])
 
-    # sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2020-05-05' and '2020-06-05' AND origin = 'KMSP' GROUP BY day"
-    backward_sql = "SELECT icao24 AS bin_icao24,  COUNT(*) FROM flights_covid_10M WHERE (registration IN ('HB-ZQH','N8696E','PH-DKF','C-GJZY','N311PQ','PH-BXT','N10ST','N8611F','LX-RCV','N626NK','N522FE','N368FX','D-HSAB','N330NB','RA-09010','N261SY','C-FASP','N921AT','EI-ECM','N253NV','N956WN','N500PC','N197PQ','N314PQ') AND origin IN ('KCLT','UUMO','EGPF','EDBM','ULLI','49NY','KJFK','EHEH','KORF','KPVU','KHOU','KMSP','CYEG','KOPF','UUDD','KMCO','KPHX','CYXX','KFOK','LSZB','7PS7','RJBB') AND destination IN ('CYYC')) GROUP BY bin_icao24"
+    sql = "SELECT FLOOR(DISTANCE/200) AS bin_DISTANCE,  COUNT(*) as count FROM flights WHERE (DEP_TIME >= 5.074285714285715 AND DEP_TIME < 7.954285714285715) GROUP BY bin_DISTANCE"
+    backward_sql = "SELECT FLOOR(AIR_TIME/20) AS bin_AIR_TIME,  COUNT(*) as count FROM flights WHERE (DEP_TIME >= 5.074285714285715 AND DEP_TIME < 7.954285714285715) GROUP BY bin_AIR_TIME"
     execute_direct_query(crossindex, backward_sql)
-    # execute_backward_query(crossindex, sql, backward_sql)
+    execute_backward_query(crossindex, sql, backward_sql)
 
 
 ''' 
@@ -675,8 +718,8 @@ bike_10M.csv args:
     --input-dir data/Bikes/Divvy_Trips.csv --name bike --dimensions geohash USER_TYPE START_TIME -types spatial categorical temporal
     sql = "SELECT USER_TYPE AS bin_USER_TYPE,  COUNT(*) as count FROM tbl_bike GROUP BY bin_USER_TYPE"
     
-flights_1M_numerical.csv args:
-    --input-dir data/dataset_flights_1M.csv --name flights_1M_numerical --dimensions DISTANCE AIR_TIME ARR_TIME DEP_TIME ARR_DELAY DEP_DELAY --types numerical numerical numerical numerical categorical categorical 
+flights_numerical_1M.csv args:
+    --input-dir data/Flights/dataset_flights_1M.csv --cube-dir cube/Flights/ --name flights_numerical_1M --dimensions DISTANCE AIR_TIME ARR_TIME DEP_TIME ARR_DELAY DEP_DELAY --types numerical numerical numerical numerical numerical numerical 
     sql = "SELECT FLOOR(ARR_TIME/1) AS bin_ARR_TIME,  COUNT(*) as count FROM flights WHERE (AIR_TIME >= 150 AND AIR_TIME < 500 AND DISTANCE >= 0 AND DISTANCE < 1000) GROUP BY bin_ARR_TIME"
     execute_direct_query(crossindex, sql)
 
