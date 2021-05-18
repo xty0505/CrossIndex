@@ -1,5 +1,6 @@
 import argparse
 import time
+import json
 from collections import defaultdict
 
 from joblib import Parallel, delayed
@@ -20,7 +21,7 @@ class CrossIndex(object):
         self.types = [Type.getType(t) for t in types]
         self.bin_width = []
         self.bin_count = []
-        self.offset = {}
+        self.offset = []
         self.dimensionSetLayers = []
         self.index = pd.DataFrame() # csv form
         self.ready = False
@@ -108,7 +109,14 @@ class CrossIndex(object):
         return last_l - 1, ''
 
     def load_csv(self, args):
-        self.adjust_by_cardinality(args['cube_dir']+args['name']+'.csv', ',', reverse=False)
+        with open(args['cube_dir']+args['name']+'.json', 'r') as f:
+            meta_info = json.load(f)
+            self.dimensions = meta_info['dimensions']
+            self.types = meta_info['types']
+            self.bin_count = meta_info['bin_count']
+            self.bin_width = meta_info['bin_width']
+            self.offset = meta_info['offset']
+            f.close()
         self.R = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '.csv'), encoding='utf-8')
         self.index = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '_csv.csv'), encoding='utf-8')
 
@@ -218,7 +226,7 @@ class CrossIndex(object):
         for i in range(len(self.dimensions)):
             sortby.append(self.dimensions[i])
             if self.types[i] == Type.numerical:
-                self.R[self.dimensions[i]+'_bin'] = (self.R[self.dimensions[i]]-self.offset[self.dimensions[i]])//self.bin_width[i]
+                self.R[self.dimensions[i]+'_bin'] = (self.R[self.dimensions[i]]-self.offset[i])//self.bin_width[i]
                 to_drop.append(self.dimensions[i]+'_bin')
         self.R = self.R.sort_values(to_drop+sortby) # 先分组有序，然后组内有序
         self.R.reset_index(drop=True, inplace=True)
@@ -249,6 +257,8 @@ class CrossIndex(object):
         crossindex.to_csv(os.path.join(options['cube_dir'], self.name + '_csv.csv'), index=False, encoding='utf-8')
         self.R.drop(columns=to_drop, inplace=True)
         self.R.to_csv(os.path.join(options['cube_dir'], self.name + '.csv'), index=False, encoding='utf-8')
+        with open(os.path.join(options['cube_dir'], self.name + '.json'), 'w') as f:
+            json.dump({"dimensions":self.dimensions,"types":self.types,"bin_count":self.bin_count, "bin_width":self.bin_width, "offset":self.offset}, f, indent=4)
 
         self.pbar.close()
         self.ready = True
@@ -279,7 +289,7 @@ class CrossIndex(object):
                 if predicte.value is None:
                     continue
                 if self.types[i] == Type.numerical:
-                    res = predicte.match_csv(res, self.dimensions[i], self.offset[self.dimensions[i]], self.bin_width[i])
+                    res = predicte.match_csv(res, self.dimensions[i], self.offset[i], self.bin_width[i])
                 else:
                     res = predicte.match_csv(res, self.dimensions[i])
                 # print(len(res))
@@ -288,20 +298,32 @@ class CrossIndex(object):
         print('search time: '+str(time.time()-start))
 
         xyMap = defaultdict(lambda: [])
+        idx = len(query.wheres)-1 if idx>=len(query.wheres) else idx
         idx = self.dimensions.index(query.groupby) if self.dimensions.index(query.groupby)>idx else idx
         start = time.time()
         interested = res[[query.groupby, 'interval'+str(idx)]].drop_duplicates(['interval'+str(idx)])
-        interested = interested.groupby(query.groupby)['interval'+str(idx)].apply(list)
-        for i,value in interested.items():
-            xyMap[str(i)] = [Interval(v.split(',')[0], v.split(',')[1]) for v in value] 
-        print('xpMap collection time:' + str(time.time() - start))
+        if query.agg == 'COUNT':
+            interested['interval'+str(idx)] = interested['interval'+str(idx)].apply(lambda x:1+int(x.split(',')[1])-int(x.split(',')[0]))
+            xy_df = interested.groupby(query.groupby)['interval'+str(idx)].agg('sum')
+            print('count computation time:' +str(time.time()-start))
+            
+            start = time.time()
+            for i,value in interested.items():
+                query.result.x_data.append(i)
+                query.result.y_data.append(value)
+            print('count collection time:' +str(time.time()-start))
+        else:
+            interested = interested.groupby(query.groupby)['interval'+str(idx)].apply(list)
+            for i,value in interested.items(): # bottleneck
+                xyMap[str(i)] = [Interval(v.split(',')[0], v.split(',')[1]) for v in value] 
+            print('xpMap collection time:' + str(time.time() - start))
 
-        start = time.time()
-        for key in sorted(xyMap.keys()):
-            query.result.x_data.append(key)
-            query.result.y_intervals.append(xyMap[key])
-        query.compute()
-        print('compute time: '+str(time.time()-start))
+            start = time.time()
+            for key in sorted(xyMap.keys()):
+                query.result.x_data.append(key)
+                query.result.y_intervals.append(xyMap[key])
+            query.compute()
+            print('compute time: '+str(time.time()-start))
         return query.result.output_xy()
 
     def query(self, query):
@@ -568,41 +590,56 @@ class CrossIndex(object):
         q.result.pretty_output()
         print('direct query time:' + str(end - start))
 
-    def calculate_cardinality(self, path, delimiter):
+    def calculate_cardinality(self, path, bw, os, delimiter):
         self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
         print('csv read fininshed.')
         cardinalities = {}
         bin_width = {}
+        offset = {}
         for i in range(len(self.dimensions)):
             d = self.dimensions[i]
             if self.types[i] == Type.spatial:
                 geohash = self.R.apply(lambda x: geohash2.encode(x[d[1]], x[d[0]], 8), axis=1)
-                cardinality = len(geohash.unique())
                 key = ",".join(d)
-                cardinalities[key] = cardinality
-                bin_width[key] = 1
-            elif self.types[i] == Type.categorical:
-                cardinality = len(self.R[d].unique())
-                cardinalities[d] = cardinality
-                bin_width[d] = 1
-            elif self.types[i] == Type.numerical:
-                self.offset[d] = self.R[d].min()
-                total_width = self.R[d].max()-self.offset[d]
-                print(d + ' total width:', total_width)
-                if total_width <= 100:
-                    bin_width[d] = 2
-                elif total_width <=1000:
-                    bin_width[d] = 20
-                elif total_width <= 10000:
-                    bin_width[d] = 200
+                if bw is not None and bw[i]!= -1:
+                    bin_width[key] = bw[i]
                 else:
-                    bin_width[d] = 1000
+                    bin_width[key] = 1
+                cardinality = len(geohash.unique())
+                cardinalities[key] = cardinality/bin_width[key]
+            elif self.types[i] == Type.categorical:
+                if bw is not None and bw[i]!= -1:
+                    bin_width[d] = bw[i]
+                else:
+                    bin_width[d] = 1
+                cardinality = len(geohash.unique())
+                cardinalities[d] = cardinality/bin_width[d]
+            elif self.types[i] == Type.numerical:
+                if os is not None and os[i]!=-1:
+                    offset[d] = os[i]
+                else:
+                    offset[d] = self.R[d].min()
+                total_width = self.R[d].max()-offset[d]
+                print(d + ' total width:', total_width)
+                if bw is not None and bw[i]!= -1:
+                    bin_width[d] = bw[i]
+                else:
+                    if total_width <= 100:
+                        bin_width[d] = 2
+                    elif total_width <=1000:
+                        bin_width[d] = 20
+                    elif total_width <= 10000:
+                        bin_width[d] = 200
+                    else:
+                        bin_width[d] = 1000
+                
                 cardinalities[d] = total_width//bin_width[d]+1
                 
-        return cardinalities, bin_width
+        return {'cardinalities':cardinalities, 'bin_width':bin_width, 'offset':offset}
 
-    def adjust_by_cardinality(self, path, delimiter, reverse):
-        cardinalities, bin_width = self.calculate_cardinality(path, delimiter)
+    def adjust_by_cardinality(self, path, delimiter, bw, offset, reverse):
+        meta_info = self.calculate_cardinality(path, bw, offset, delimiter)
+        cardinalities, bin_width, offset = meta_info['cardinalities'], meta_info['bin_width'], meta_info['offset']
         cardinalities = sorted(cardinalities.items(), key=lambda kv: (kv[1], kv[0]), reverse=reverse)
         print(cardinalities)
 
@@ -616,6 +653,10 @@ class CrossIndex(object):
             tmp_t.append(self.types[self.dimensions.index(key)])
             self.bin_count.append(c[1])
             self.bin_width.append(bin_width[key])
+            if key in offset.keys():
+                self.offset.append(offset[key])
+            else:
+                self.offset.append(-1)
         self.dimensions = tmp_d
         self.types = tmp_t
 
@@ -658,6 +699,8 @@ if __name__ == '__main__':
     # if dimension type is spatial, it should be like "lng,lat"
     argparser.add_argument('--dimensions', dest='dimensions', nargs='+', type=str, help='dimensions need to be filtered')
     argparser.add_argument('--types', dest='types', nargs='+', type=str, help='types of dimensions')
+    argparser.add_argument('--bin-width', dest='bin_width', nargs='+', type=int, help='bin count of dimensions', default=None)
+    argparser.add_argument('--offset', dest='offset', nargs='+', type=int, help='offset of numerical dimensions', default=None)
 
     argparser.add_argument('--delimiter', dest='delimiter', help='delimiter of csv file', default=',')
     argparser.add_argument('--single', dest='single', action='store_true', help='whether to build in single thread', default=False)
@@ -671,8 +714,6 @@ if __name__ == '__main__':
     argparser.add_argument('--date-format', dest='date_format', help='date format for temporal', default='%Y-%m-%d %H:%M:%S')
     # spatial
     argparser.add_argument('--hash-length', dest='hash_length', type=int, help='geohash code length for spatial', default=8)
-    # numerical
-    argparser.add_argument('--bin-width', dest='bin_width', type=int, help='bin width for numerical', default=10)
 
     args = vars(argparser.parse_args())
 
@@ -687,17 +728,17 @@ if __name__ == '__main__':
         if os.path.exists(args['cube_dir'] + args['name'] + '_csv.csv'):
             crossindex.load_csv(args)
         else:
-            crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
+            crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], args['bin_width'], args['offset'], reverse=False)
             crossindex.build_csv(args['input_dir'], args['delimiter'], args)
     else:
         if os.path.exists(args['cube_dir'] + args['name'] + '.csv'):
             crossindex.load(args['cube_dir'], args['name'])
         else:
             if args['single'] == True:
-                crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
+                crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], args['bin_width'], args['offset'], reverse=False)
                 crossindex.build(args['input_dir'], args['delimiter'], args)
             else:
-                crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
+                crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], args['bin_width'], args['offset'], reverse=False)
                 crossindex.build_parallel(args['input_dir'], args['delimiter'], args)
             crossindex.save(args['cube_dir'])
 
