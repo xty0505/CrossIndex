@@ -227,6 +227,7 @@ class Query(object):
             if groupby.startswith('bin'):
                 groupby = groupby[4:]
             self.groupby = groupby
+        self.measure = self.groupby if self.measure=='*' else self.measure
         self.result = ResultSet(self.groupby, self.agg + '(' + self.measure + ')')
 
     def parse_conditions(self, sql):
@@ -271,31 +272,22 @@ class Query(object):
                 conditions.append(condition)
         return list(set(conditions))
 
-    def compute(self):
+    def compute(self, valid_id):
+        res = self.cube.R.loc[valid_id]
+        idx = self.cube.dimensions.index(self.groupby)
+        res[self.groupby] = (res[self.groupby]-self.cube.offset[idx])//self.cube.bin_width[idx]
         if self.agg == aggregation.get('CNT'):
-            for i in range(len(self.result.x_data)):
-                count = 0
-                intervals = self.result.y_intervals[i]
-                for interval in intervals:
-                    count = count + interval.count
-                self.result.y_data.append(count)
+            xy_series = res[self.groupby].value_counts().sort_index()
+            self.result.x_data = list(xy_series.index.astype(str))
+            self.result.y_data = list(xy_series.values)
         elif self.agg == aggregation.get('AVG'):
-            for i in range(len(self.result.x_data)):
-                sum = 0
-                count = 0
-                intervals = self.result.y_intervals[i]
-                for interval in intervals:
-                    sum = sum + self.cube.R.iloc[interval.begin:interval.end + 1][self.measure].sum()
-                    count = count + interval.count
-                average = sum / count
-                self.result.y_data.append(average)
+            xy_series = res.groupby(self.groupby)[self.measure].sum()
+            self.result.x_data = list(xy_series.index.astype(str))
+            self.result.y_data = list(xy_series.values)
         elif self.agg == aggregation.get('SUM'):
-            for i in range(len(self.result.x_data)):
-                sum = 0
-                intervals = self.result.y_intervals[i]
-                for interval in intervals:
-                    sum = sum + self.cube.R.iloc[interval.begin:interval.end + 1][self.measure].sum()
-                self.result.y_data.append(sum)
+            xy_series = res.groupby(self.groupby)[self.measure].mean()
+            self.result.x_data = list(xy_series.index.astype(str))
+            self.result.y_data = list(xy_series.values)
 
     def get_query_index_sql(self, idx, tbname):
         where_clause = ""

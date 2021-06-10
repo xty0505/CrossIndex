@@ -1,0 +1,203 @@
+{
+    "flights": {
+        "1M": {
+            "time_cost": 22.26818585395813,
+            "dimensions": [
+                "ARR_DELAY",
+                "DEP_DELAY",
+                "DISTANCE",
+                "AIR_TIME",
+                "ARR_TIME",
+                "DEP_TIME"
+            ],
+            "bin_count": [
+                20.0,
+                20.0,
+                23.0,
+                25.0,
+                25.0,
+                25.0
+            ]
+        },
+        "10M": {
+            "time_cost": 125.85794377326965,
+            "dimensions": [
+                "ARR_DELAY",
+                "DEP_DELAY",
+                "DISTANCE",
+                "AIR_TIME",
+                "ARR_TIME",
+                "DEP_TIME"
+            ],
+            "bin_count": [
+                20.0,
+                20.0,
+                23.0,
+                25.0,
+                25.0,
+                25.0
+            ]
+        },
+        "100M": {
+            "time_cost": 1045.921992778778,
+            "dimensions": [
+                "ARR_DELAY",
+                "DEP_DELAY",
+                "DISTANCE",
+                "AIR_TIME",
+                "ARR_TIME",
+                "DEP_TIME"
+            ],
+            "bin_count": [
+                20.0,
+                20.0,
+                23.0,
+                25.0,
+                25.0,
+                25.0
+            ]
+        }
+    },
+    "movies": {
+        "1M": {
+            "time_cost": 38.70749521255493,
+            "dimensions": [
+                "Running_Time_min",
+                "US_Gross",
+                "IMDB_Rating",
+                "Production_Budget",
+                "US_DVD_Sales",
+                "Rotten_Tomatoes_Rating",
+                "Worldwide_Gross",
+                "Release_Date"
+            ],
+            "bin_count": [
+                9.0,
+                12.0,
+                15.0,
+                15.0,
+                17.0,
+                20.0,
+                37.0,
+                50.0
+            ]
+        },
+        "10M": {
+            "time_cost": 260.0359525680542,
+            "dimensions": [
+                "Running_Time_min",
+                "US_Gross",
+                "IMDB_Rating",
+                "Production_Budget",
+                "US_DVD_Sales",
+                "Rotten_Tomatoes_Rating",
+                "Worldwide_Gross",
+                "Release_Date"
+            ],
+            "bin_count": [
+                9.0,
+                12.0,
+                15.0,
+                15.0,
+                17.0,
+                20.0,
+                37.0,
+                50.0
+            ]
+        },
+        "100M": {
+            "time_cost": 2087.1063606739044,
+            "dimensions": [
+                "Running_Time_min",
+                "US_Gross",
+                "IMDB_Rating",
+                "Production_Budget",
+                "US_DVD_Sales",
+                "Rotten_Tomatoes_Rating",
+                "Worldwide_Gross",
+                "Release_Date"
+            ],
+            "bin_count": [
+                9.0,
+                13.0,
+                15.0,
+                16.0,
+                17.0,
+                20.0,
+                37.0,
+                50.0
+            ]
+        }
+    },
+    "weather": {
+        "1M": {
+            "time_cost": 45.99647855758667,
+            "dimensions": [
+                "TEMP_MIN",
+                "TEMP_MAX",
+                "SNOW",
+                "ELEVATION",
+                "LONGITUDE",
+                "PRECIPITATION",
+                "WIND",
+                "RECORD_DATE"
+            ],
+            "bin_count": [
+                11.0,
+                13.0,
+                14.0,
+                17.0,
+                23.0,
+                24.0,
+                24.0,
+                48.0
+            ]
+        },
+        "10M": {
+            "time_cost": 291.82489490509033,
+            "dimensions": [
+                "TEMP_MIN",
+                "TEMP_MAX",
+                "SNOW",
+                "ELEVATION",
+                "LONGITUDE",
+                "PRECIPITATION",
+                "WIND",
+                "RECORD_DATE"
+            ],
+            "bin_count": [
+                11.0,
+                13.0,
+                14.0,
+                17.0,
+                23.0,
+                24.0,
+                24.0,
+                48.0
+            ]
+        },
+        "100M": {
+            "time_cost": 2087.637109041214,
+            "dimensions": [
+                "TEMP_MIN",
+                "TEMP_MAX",
+                "SNOW",
+                "ELEVATION",
+                "LONGITUDE",
+                "PRECIPITATION",
+                "WIND",
+                "RECORD_DATE"
+            ],
+            "bin_count": [
+                11.0,
+                13.0,
+                14.0,
+                17.0,
+                23.0,
+                24.0,
+                24.0,
+                48.0
+            ]
+        }
+    }
+}
