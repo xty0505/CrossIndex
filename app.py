@@ -1,8 +1,8 @@
 from flask import Flask, g, current_app, render_template
-from blueprint import vizcube
+from blueprint import crossindex
 
 app = Flask(__name__)
-app.register_blueprint(vizcube.bp)
+app.register_blueprint(crossindex.bp)
 
 
 @app.route('/')

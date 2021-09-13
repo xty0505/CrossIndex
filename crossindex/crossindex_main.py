@@ -106,12 +106,13 @@ class CrossIndex(object):
 
     def build(self, path, delimiter, options):
         start = time.time()
-        # self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
-        # print('pd.read_csv finished.')
+        self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
+        print('pd.read_csv finished.')
 
         # sorting
         print('sorting...')
-        self.R = self.R.sort_values(self.dimensions)
+        tmp_dimensiosn = self.process_for_spatial()
+        self.R = self.R.sort_values(tmp_dimensiosn)
         self.R.reset_index(drop=True, inplace=True)
         print('sorting done.')
         print('sorting time: '+str(time.time()-start))
@@ -152,11 +153,13 @@ class CrossIndex(object):
 
     def build_parallel(self, path, delimiter, options):
         start = time.time()
-        # self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
-        # print('pd.read_csv finished.')
+        self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
+        print('pd.read_csv finished.')
 
         # sorting
         print('sorting...')
+        tmp_dimensiosn = self.process_for_spatial()
+        self.R = self.R.sort_values(tmp_dimensiosn)
         self.R = self.R.sort_values(self.dimensions)
         self.R.reset_index(drop=True, inplace=True)
         print('sorting done.')
@@ -198,6 +201,14 @@ class CrossIndex(object):
         self.ready = True
         end = time.time()
         print('build time:' + str(end - start))
+
+    def process_for_spatial(self):
+        # 经纬度类型的维度用 lng 代替
+        idx = self.types.index(Type.spatial)
+        if idx >= 0:
+            tmp = self.dimensions.copy()
+            tmp[idx] = self.dimensions[idx][0]
+            return tmp
 
     def build_csv(self, path, delimiter, options):
         self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
@@ -291,6 +302,7 @@ class CrossIndex(object):
         if start_idx == 0:
             start = DimensionSet('root', -1, 'all', None)
             start.subSet = self.dimensionSetLayers[0]
+            start = [start]
         else:
             start = self.dimensionSetLayers[start_idx-1]
         validDSs.extend(start)
@@ -371,7 +383,7 @@ class CrossIndex(object):
         conditions = other.wheres
         idx, flag = query.get_deepest_overlapped_idx(conditions)
         if idx not in query.cache.keys():
-            return self.query_csv(query)
+            return self.query_csv(other)
         if flag:
             for i in range(idx):
                 if i in query.cache.keys():
@@ -658,10 +670,10 @@ if __name__ == '__main__':
                 crossindex.build_parallel(args['input_dir'], args['delimiter'], args)
             crossindex.save(args['cube_dir'])
 
-    # sql = "SELECT day, COUNT(origin) FROM flighs_covid WHERE day BETWEEN '2020-05-05' and '2020-06-05' AND origin = 'KMSP' GROUP BY day"
-    backward_sql = "SELECT icao24 AS bin_icao24,  COUNT(*) FROM flights_covid_10M WHERE (registration IN ('HB-ZQH','N8696E','PH-DKF','C-GJZY','N311PQ','PH-BXT','N10ST','N8611F','LX-RCV','N626NK','N522FE','N368FX','D-HSAB','N330NB','RA-09010','N261SY','C-FASP','N921AT','EI-ECM','N253NV','N956WN','N500PC','N197PQ','N314PQ') AND origin IN ('KCLT','UUMO','EGPF','EDBM','ULLI','49NY','KJFK','EHEH','KORF','KPVU','KHOU','KMSP','CYEG','KOPF','UUDD','KMCO','KPHX','CYXX','KFOK','LSZB','7PS7','RJBB') AND destination IN ('CYYC')) GROUP BY bin_icao24"
+    sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 8 GROUP BY time"
+    backward_sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 5 AND time >= 640 AND time < 674 GROUP BY time"
     execute_direct_query(crossindex, backward_sql)
-    # execute_backward_query(crossindex, sql, backward_sql)
+    execute_backward_query(crossindex, sql, backward_sql)
 
 
 ''' 
@@ -676,7 +688,7 @@ bike_10M.csv args:
     sql = "SELECT USER_TYPE AS bin_USER_TYPE,  COUNT(*) as count FROM tbl_bike GROUP BY bin_USER_TYPE"
     
 flights_1M_numerical.csv args:
-    --input-dir data/dataset_flights_1M.csv --name flights_1M_numerical --dimensions DISTANCE AIR_TIME ARR_TIME DEP_TIME ARR_DELAY DEP_DELAY --types numerical numerical numerical numerical categorical categorical 
+    --input-dir data/dataset_flights_1M.csv --name flights_numerical_1M --dimensions DISTANCE AIR_TIME ARR_TIME DEP_TIME ARR_DELAY DEP_DELAY --types numerical numerical numerical numerical categorical categorical 
     sql = "SELECT FLOOR(ARR_TIME/1) AS bin_ARR_TIME,  COUNT(*) as count FROM flights WHERE (AIR_TIME >= 150 AND AIR_TIME < 500 AND DISTANCE >= 0 AND DISTANCE < 1000) GROUP BY bin_ARR_TIME"
     execute_direct_query(crossindex, sql)
 

@@ -4,9 +4,9 @@ from flask import Flask, Blueprint, g, request, flash, redirect, json, render_te
 
 from query import Query, Condition
 from resultset import ResultSet
-from vizcube_parallel import VizCube, Type
+from crossindex_main import CrossIndex, Type
 
-cube = VizCube('')
+cube = CrossIndex('')
 UPLOAD_PATH = './data'
 CUBE_PATH = './cube'
 ALLOWED_EXTENSIONS = {'csv'}
@@ -63,7 +63,7 @@ def build():
     if request.method == 'POST':
         cube = get_cube()
         if not cube.name == '':
-            cube = VizCube('')
+            cube = CrossIndex('')
         data = request.get_json()
         cube.name = data['name']
         cube.dimensions = data['dimensions']
@@ -72,14 +72,18 @@ def build():
         # lng,lat 合并为 [lng, lat]
         if 'spatial' in cube.types:
             lng_i = cube.types.index('spatial')
-            lat_i = cube.types.index('spatial', lng_i + 1, -1)
+            lat_i = cube.types.index('spatial', lng_i + 1)
             lnglat = [cube.dimensions[lng_i], cube.dimensions[lat_i]]
             cube.dimensions[lng_i] = lnglat
             cube.dimensions.remove(cube.dimensions[lat_i])
             cube.types.remove(cube.types[lng_i])
-        cube.build2(path, ',')
+            cube.types = [Type.getType(t) for t in cube.types]
+        options = {
+            "hash_length": 7
+        }
+        cube.build(path, ',', options)
         cube.save(app.config['CUBE_PATH'])
-    return 'Cube Built in ' + app.config['CUBE_PATH']
+    return 'CrossIndex Built in ' + app.config['CUBE_PATH']
 
 
 @bp.route('/build/status', methods=('POST', 'GET'))
@@ -132,10 +136,10 @@ def backward_query():
             q.clear()
 
         if flag == 0:
-            link_cnt_rs = cube.query2(Q[0])
-            vehicle_cnt_rs = cube.query2(Q[1])
-            timestep_cnt_rs = cube.query2(Q[2])
-            cube.query2(Q[3])
+            link_cnt_rs = cube.query(Q[0])
+            vehicle_cnt_rs = cube.query(Q[1])
+            timestep_cnt_rs = cube.query(Q[2])
+            cube.query(Q[3])
             data, max = Q[3].get_geo_result(None)
         else:
             # backward_query()
@@ -171,10 +175,10 @@ def query_spatial():
             q.add_condition(condition)
             q.clear()
         # query()
-        link_cnt_rs = cube.query2(Q[0])
-        vehicle_cnt_rs = cube.query2(Q[1])
-        timestep_cnt_rs = cube.query2(Q[2])
-        cube.query2(Q[3])
+        link_cnt_rs = cube.query(Q[0])
+        vehicle_cnt_rs = cube.query(Q[1])
+        timestep_cnt_rs = cube.query(Q[2])
+        cube.query(Q[3])
         # todo get_geo_result takes too long time, remove the timestep condition
         data, max = Q[3].get_geo_result(limit)
 
@@ -190,21 +194,21 @@ def query_spatial():
 
 def query_with_request(cube, type):
     if type == Type.categorical:
-        sql = "SELECT COUNT(velocity) from trace WHERE geohash = 'wtw3sm' GROUP BY link_id"
+        sql = "SELECT COUNT(velocity) FROM trace WHERE geohash = 'wtw3sm' GROUP BY link_id"
         q1.parse(sql)
-        link_cnt_result = cube.query2(q1)
-        sql = "SELECT COUNT(velocity) from trace WHERE geohash = 'wtw3sm' GROUP BY vehicle_id"
+        link_cnt_result = cube.query(q1)
+        sql = "SELECT COUNT(velocity) FROM trace WHERE geohash = 'wtw3sm' GROUP BY vehicle_id"
         q2.parse(sql)
-        vehicle_cnt_result = cube.query2(q2)
+        vehicle_cnt_result = cube.query(q2)
         return {0: link_cnt_result, 1: vehicle_cnt_result}
     elif type == Type.temporal:
-        sql = "SELECT COUNT(velocity) from trace WHERE geohash = 'wtw3sm' GROUP BY timestep"
+        sql = "SELECT COUNT(velocity) FROM trace WHERE geohash = 'wtw3sm' GROUP BY timestep"
         q3.parse(sql)
-        timestep_cnt_result = cube.query2(q3)
+        timestep_cnt_result = cube.query(q3)
         return timestep_cnt_result
     elif type == Type.spatial:
-        sql = "SELECT COUNT(velocity) from trace WHERE geohash = 'wtw3sm' GROUP BY geohash"
+        sql = "SELECT COUNT(velocity) FROM trace WHERE geohash = 'wtw3sm' GROUP BY geohash"
         q4.parse(sql)
-        cube.query2(q4)
+        cube.query(q4)
         data, max = q4.get_geo_result(None)
         return {'data': data, 'max': max}
