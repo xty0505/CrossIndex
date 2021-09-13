@@ -1,5 +1,7 @@
 import argparse
 import time
+import json
+import random
 from collections import defaultdict
 
 from joblib import Parallel, delayed
@@ -18,6 +20,9 @@ class CrossIndex(object):
         self.name = name
         self.dimensions = dimensions
         self.types = [Type.getType(t) for t in types]
+        self.bin_width = []
+        self.bin_count = []
+        self.offset = []
         self.dimensionSetLayers = []
         self.index = pd.DataFrame() # csv form
         self.ready = False
@@ -103,6 +108,24 @@ class CrossIndex(object):
                 last_l, line = self.recursiveLoad(f, line, l)
         self.dimensionSetLayers[last_l - 1][-1].subSet = subSet
         return last_l - 1, ''
+
+    def save_csv(self, args):
+        self.index.to_csv(os.path.join(args['cube_dir'], self.name + '_csv.csv'), index=False, encoding='utf-8')
+        self.R.to_csv(os.path.join(args['cube_dir'], self.name + '.csv'), index=False, encoding='utf-8')
+        with open(os.path.join(args['cube_dir'], self.name + '.json'), 'w') as f:
+            json.dump({"dimensions":self.dimensions,"types":self.types,"bin_count":self.bin_count, "bin_width":self.bin_width, "offset":self.offset}, f, indent=4)
+
+    def load_csv(self, args):
+        with open(args['cube_dir']+args['name']+'.json', 'r') as f:
+            meta_info = json.load(f)
+            self.dimensions = meta_info['dimensions']
+            self.types = meta_info['types']
+            self.bin_count = meta_info['bin_count']
+            self.bin_width = meta_info['bin_width']
+            self.offset = meta_info['offset']
+            f.close()
+        self.R = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '.csv'), encoding='utf-8')
+        self.index = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '_csv.csv'), encoding='utf-8')
 
     def build(self, path, delimiter, options):
         start = time.time()
@@ -210,13 +233,18 @@ class CrossIndex(object):
             tmp[idx] = self.dimensions[idx][0]
             return tmp
 
-    def build_csv(self, path, delimiter, options):
-        self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
-        print('pd.read_csv finished.')
+    def build_csv(self):
         # sorting
         start = time.time()
         print('sorting...')
-        self.R = self.R.sort_values(self.dimensions)
+        sortby = []
+        to_drop = []
+        for i in range(len(self.dimensions)):
+            sortby.append(self.dimensions[i])
+            if self.types[i] == Type.numerical:
+                self.R[self.dimensions[i]+'_bin'] = (self.R[self.dimensions[i]]-self.offset[i])//self.bin_width[i]
+                to_drop.append(self.dimensions[i]+'_bin')
+        self.R = self.R.sort_values(to_drop+sortby) # 先分组有序，然后组内有序
         self.R.reset_index(drop=True, inplace=True)
         print('sorting done.')
         print('sorting time: '+str(time.time()-start))
@@ -227,25 +255,40 @@ class CrossIndex(object):
         # groupby
         self.pbar = tqdm(desc='CrossIndex Build', total=len(self.R) * len(self.dimensions))
         crossindex = self.R[self.dimensions]
-        groupby = []
-        crossindex['idx'] = crossindex[self.dimensions[0]].index.astype(int)
+        groupby = list(self.dimensions)
         for i in range(len(self.dimensions)):
-            groupby.append(self.dimensions[i])
-            tmp = crossindex.groupby(groupby).agg(
-                interval = ('idx', calInterval),
-            ).reset_index()
-            crossindex = crossindex.merge(tmp, how='left', left_on=groupby, right_on=groupby)
+            if self.types[i] == Type.numerical:
+                crossindex[self.dimensions[i]] = self.R[self.dimensions[i]+'_bin'].astype(int)
+        crossindex['idx'] = crossindex[self.dimensions[0]].index.astype(int)
+        for i in range(len(self.dimensions)-1, -1, -1):
+            # if self.types[i] == Type.numerical:
+                # crossindex[self.dimensions[i]] = self.R[self.dimensions[i]+'_bin'].astype(int)
+            # groupby.append(self.dimensions[i])
+            if i == len(self.dimensions)-1:
+                tmp = crossindex.groupby(groupby).agg(
+                    interval = ('idx', calInterval),
+                ).reset_index()
+                crossindex = crossindex.merge(tmp, how='right', left_on=groupby, right_on=groupby)
+                groupby.remove(self.dimensions[i])
+            else:
+                tmp = crossindex.groupby(groupby).agg(
+                    interval = ('interval'+str(len(self.dimensions)-1), lambda x: x.iloc[0].split(',')[0]+','+x.iloc[-1].split(',')[1])
+                ).reset_index()
+                crossindex = crossindex.merge(tmp, how='left', left_on=groupby, right_on=groupby)
+                groupby.remove(self.dimensions[i])
             crossindex.rename(columns={'interval':'interval'+str(i)}, inplace=True)
             self.pbar.update(len(crossindex))
+        
         crossindex.drop(columns=['idx'], inplace=True)
-        crossindex.to_csv(os.path.join(options['cube_dir'], self.name + '_csv.csv'), index=False, encoding='utf-8')
-        self.R.to_csv(os.path.join(options['cube_dir'], self.name + '.csv'), index=False, encoding='utf-8')
+        crossindex.drop_duplicates(inplace=True)
+        self.R.drop(columns=to_drop, inplace=True)
 
         self.pbar.close()
         self.ready = True
         self.index = crossindex
         end = time.time()
         print('build time:' + str(end - start))
+        return end-start
 
     def query_csv(self, query, search_space=None, index=0):
         res = search_space
@@ -269,28 +312,48 @@ class CrossIndex(object):
                 predicte = query.wheres[i]
                 if predicte.value is None:
                     continue
-                res = predicte.match_csv(res, self.dimensions[i])
+                if self.types[i] == Type.numerical:
+                    res = predicte.match_csv(res, self.dimensions[i], self.offset[i], self.bin_width[i])
+                else:
+                    res = predicte.match_csv(res, self.dimensions[i])
+                # print(len(res))
                 query.cache[i] = res
                 idx = i
         print('search time: '+str(time.time()-start))
 
-        xyMap = defaultdict(lambda: [])
+        if len(res)>1000000: # drop query when overwhelming
+            return "dropped"
+        start = time.time()
+        idx = len(query.wheres)-1 if idx>=len(query.wheres) else idx
         idx = self.dimensions.index(query.groupby) if self.dimensions.index(query.groupby)>idx else idx
-        start = time.time()
-        last_interval = []
-        for row in res[[query.groupby, 'interval'+str(idx)]].itertuples():
-            cur = row[2].split(',')
-            if last_interval == cur:
-                continue
-            xyMap[str(row[1])].append(Interval(cur[0], cur[1]))
-            last_interval = cur
-        print('xpMap collection time:' + str(time.time() - start))
-        start = time.time()
-        for key in sorted(xyMap.keys()):
-            query.result.x_data.append(key)
-            query.result.y_intervals.append(xyMap[key])
-        query.compute()
-        print('compute time: '+str(time.time()-start))
+        interested = res[[query.groupby, 'interval'+str(idx)]].drop_duplicates(['interval'+str(idx)])
+        if query.agg == 'COUNT':
+            interested['interval'+str(idx)] = interested['interval'+str(idx)].apply(lambda x:1+int(x.split(',')[1])-int(x.split(',')[0]))
+            xy_df = interested.groupby(query.groupby)['interval'+str(idx)].agg('sum')
+            print('count computation time:' +str(time.time()-start))
+            
+            start = time.time()
+            for i,value in xy_df.items():
+                query.result.x_data.append(str(i))
+                query.result.y_data.append(value)
+            print('count collection time:' +str(time.time()-start))
+        else:
+            # interested = interested.groupby(query.groupby)['interval'+str(idx)].apply(list)
+            # print('groupby time:'+str(time.time()-start))
+            # print(len(interested))
+            # for i,value in interested.items(): # bottleneck
+            #     xyMap[str(i)] = [Interval(v.split(',')[0], v.split(',')[1]) for v in value] 
+            valid_id = []
+            for v in list(interested['interval'+str(idx)]):
+                valid_id.extend(list(range(int(v.split(',')[0]), int(v.split(',')[1])+1)))
+            print('intervals collection time:' + str(time.time() - start))
+
+            start = time.time()
+            # for key in sorted(xyMap.keys()):
+            #     query.result.x_data.append(key)
+            #     query.result.y_intervals.append(xyMap[key])
+            query.compute(valid_id)
+            print('compute time: '+str(time.time()-start))
         return query.result.output_xy()
 
     def query(self, query):
@@ -383,17 +446,19 @@ class CrossIndex(object):
         conditions = other.wheres
         idx, flag = query.get_deepest_overlapped_idx(conditions)
         if idx not in query.cache.keys():
-            return self.query_csv(other)
+            res = self.query_csv(other)
+            return False, res
         if flag:
             for i in range(idx):
                 if i in query.cache.keys():
                     other.cache[i] = query.cache[i]
-            self.query_csv(other, query.cache[idx], idx)
+            res = self.query_csv(other, query.cache[idx], idx)
         else:
             for i in range(idx+1):
                 if i in query.cache.keys():
                     other.cache[i] = query.cache[i]
-            self.query_csv(other, other.cache[idx], idx+1)
+            res = self.query_csv(other, other.cache[idx], idx+1)
+        return True, res
 
     def backward_query(self, query, conditions):
         j = 0
@@ -556,25 +621,61 @@ class CrossIndex(object):
         q.result.pretty_output()
         print('direct query time:' + str(end - start))
 
-    def calculate_cardinality(self, path, delimiter):
+    def calculate_cardinality(self, path, bw, os, delimiter):
         self.R = pd.read_csv(path, encoding='utf-8', delimiter=delimiter)
         print('csv read fininshed.')
         cardinalities = {}
+        bin_width = {}
+        offset = {}
         for i in range(len(self.dimensions)):
             d = self.dimensions[i]
             if self.types[i] == Type.spatial:
                 geohash = self.R.apply(lambda x: geohash2.encode(x[d[1]], x[d[0]], 8), axis=1)
-                cardinality = len(geohash.unique())
                 key = ",".join(d)
-                cardinalities[key] = cardinality
-            else:
-                cardinality = len(self.R[d].unique())
-                cardinalities[d] = cardinality
-        return cardinalities
+                if bw is not None and bw[i]!= -1:
+                    bin_width[key] = bw[i]
+                else:
+                    bin_width[key] = 1
+                cardinality = len(geohash.unique())
+                cardinalities[key] = cardinality/bin_width[key]
+            elif self.types[i] == Type.categorical:
+                if bw is not None and bw[i]!= -1:
+                    bin_width[d] = bw[i]
+                else:
+                    bin_width[d] = 1
+                cardinality = len(geohash.unique())
+                cardinalities[d] = cardinality/bin_width[d]
+            elif self.types[i] == Type.numerical:
+                if os is not None and os[i]!=-1:
+                    offset[d] = os[i]
+                else:
+                    offset[d] = self.R[d].min()
+                total_width = self.R[d].max()-offset[d]
+                print(d + ' total width:', total_width)
+                if bw is not None and bw[i]!= -1:
+                    bin_width[d] = bw[i]
+                else:
+                    if total_width <= 100:
+                        bin_width[d] = 2
+                    elif total_width <=1000:
+                        bin_width[d] = 20
+                    elif total_width <= 10000:
+                        bin_width[d] = 200
+                    else:
+                        bin_width[d] = 1000
+                
+                cardinalities[d] = total_width//bin_width[d]+1
+                
+        return {'cardinalities':cardinalities, 'bin_width':bin_width, 'offset':offset}
 
-    def adjust_by_cardinality(self, path, delimiter, reverse):
-        cardinalities = self.calculate_cardinality(path, delimiter)
-        cardinalities = sorted(cardinalities.items(), key=lambda kv: (kv[1], kv[0]), reverse=reverse)
+    def adjust_by_cardinality(self, path, bw, offset, delimiter, reverse=False, rd=False):
+        meta_info = self.calculate_cardinality(path, bw, offset, delimiter)
+        cardinalities, bin_width, offset = meta_info['cardinalities'], meta_info['bin_width'], meta_info['offset']
+        if rd:
+            cardinalities = list(cardinalities.items())
+            random.shuffle(cardinalities)
+        else:
+            cardinalities = sorted(cardinalities.items(), key=lambda kv: (kv[1], kv[0]), reverse=reverse)
         print(cardinalities)
 
         tmp_d = []
@@ -585,6 +686,12 @@ class CrossIndex(object):
                 key = key.split(',')
             tmp_d.append(key)
             tmp_t.append(self.types[self.dimensions.index(key)])
+            self.bin_count.append(c[1])
+            self.bin_width.append(bin_width[key])
+            if key in offset.keys():
+                self.offset.append(offset[key])
+            else:
+                self.offset.append(-1)
         self.dimensions = tmp_d
         self.types = tmp_t
 
@@ -610,9 +717,10 @@ def execute_backward_query(crossindex, sql, new_sql):
     q = Query(cube=crossindex)
     q.parse(new_sql)
     start = time.time()
-    crossindex.backward_query_csv(cached_q, q)
+    flag,_ = crossindex.backward_query_csv(cached_q, q)
     end = time.time()
     q.result.pretty_output()
+    print(flag)
     print('backward query: ' + str(end - start))
 
     return q
@@ -626,6 +734,8 @@ if __name__ == '__main__':
     # if dimension type is spatial, it should be like "lng,lat"
     argparser.add_argument('--dimensions', dest='dimensions', nargs='+', type=str, help='dimensions need to be filtered')
     argparser.add_argument('--types', dest='types', nargs='+', type=str, help='types of dimensions')
+    argparser.add_argument('--bin-width', dest='bin_width', nargs='+', type=float, help='bin width of dimensions', default=None)
+    argparser.add_argument('--offset', dest='offset', nargs='+', type=int, help='offset of numerical dimensions', default=None)
 
     argparser.add_argument('--delimiter', dest='delimiter', help='delimiter of csv file', default=',')
     argparser.add_argument('--single', dest='single', action='store_true', help='whether to build in single thread', default=False)
@@ -639,8 +749,6 @@ if __name__ == '__main__':
     argparser.add_argument('--date-format', dest='date_format', help='date format for temporal', default='%Y-%m-%d %H:%M:%S')
     # spatial
     argparser.add_argument('--hash-length', dest='hash_length', type=int, help='geohash code length for spatial', default=8)
-    # numerical
-    argparser.add_argument('--bin-width', dest='bin_width', type=int, help='bin width for numerical', default=10)
 
     args = vars(argparser.parse_args())
 
@@ -653,31 +761,47 @@ if __name__ == '__main__':
     crossindex =CrossIndex(args['name'], args['dimensions'], args['types'], args['omnisci'])
     if args['csv']:
         if os.path.exists(args['cube_dir'] + args['name'] + '_csv.csv'):
-            crossindex.R = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '.csv'), encoding='utf-8', delimiter=',')
-            crossindex.index = pd.read_csv(os.path.join(args['cube_dir'], args['name'] + '_csv.csv'), encoding='utf-8', delimiter=args['delimiter'])
+            crossindex.load_csv(args)
         else:
-            crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
-            crossindex.build_csv(args['input_dir'], args['delimiter'], args)
+            crossindex.adjust_by_cardinality(args['input_dir'], args['bin_width'], args['offset'],  args['delimiter'], reverse=False)
+            crossindex.build_csv()
+            crossindex.save_csv(args)
     else:
         if os.path.exists(args['cube_dir'] + args['name'] + '.csv'):
             crossindex.load(args['cube_dir'], args['name'])
         else:
             if args['single'] == True:
-                crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
+                crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], args['bin_width'], args['offset'], reverse=False)
                 crossindex.build(args['input_dir'], args['delimiter'], args)
             else:
-                crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], reverse=False)
+                crossindex.adjust_by_cardinality(args['input_dir'], args['delimiter'], args['bin_width'], args['offset'], reverse=False)
                 crossindex.build_parallel(args['input_dir'], args['delimiter'], args)
             crossindex.save(args['cube_dir'])
 
-    sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 8 GROUP BY time"
-    backward_sql = "SELECT COUNT(vehicle_num) from traffic WHERE vehicle_num >= 1 AND vehicle_num < 2 AND velocity_ave >= 4 AND velocity_ave < 5 AND time >= 640 AND time < 674 GROUP BY time"
+    sql = "SELECT FLOOR(Release_Date/30541006451.612904) AS bin_Release_Date,  COUNT(*) as count FROM movies WHERE (Running_Time_min >= 78.74285714285715 AND Running_Time_min < 93.60000000000001  AND Production_Budget >= 3.428571428571434 AND Production_Budget < 41.14285714285714) GROUP BY bin_Release_Date"
+    backward_sql = "SELECT FLOOR(Release_Date/30541006451.612904) AS bin_Release_Date,  COUNT(*) as count FROM movies WHERE (Running_Time_min >= 78.74285714285715 AND Running_Time_min < 93.60000000000001  AND Production_Budget >= 3.428571428571434 AND Production_Budget < 41.14285714285714) GROUP BY bin_Release_Date"
     execute_direct_query(crossindex, backward_sql)
     execute_backward_query(crossindex, sql, backward_sql)
 
 
 ''' 
 ====EXPERIMENT ARGS====
+weather args:
+    --input-dir data/Weather/dataset_weather_1M_fixed.csv --cube-dir cube/Weather/ --name weather_1M 
+    --dimensions RECORD_DATE ELEVATION LONGITUDE TEMP_MIN TEMP_MAX SNOW PRECIPITATION WIND 
+    --types numerical numerical numerical numerical numerical numerical numerical numerical 
+    --bin-width 163725000 200 20 5 5 50 0.5 0.5 --offset 1325307600000 -200 -160 -10 -10 0 0 0 --csv
+    sql = "SELECT FLOOR(ELEVATION/200) AS bin_ELEVATION,  COUNT(*) as count FROM weather WHERE (TEMP_MIN >= 24.457142857142863 AND TEMP_MIN < 29.6) GROUP BY bin_ELEVATION"
+    backward_sql = "SELECT FLOOR(ELEVATION/200) AS bin_ELEVATION,  COUNT(*) as count FROM weather WHERE (TEMP_MIN >= 24.457142857142863 AND TEMP_MIN < 29.6) GROUP BY bin_ELEVATION"
+
+movies args:
+    --input-dir data/Movies/dataset_movies_1M_fixed.csv --cube-dir cube/Movies/ --name movies_1M 
+    --dimensions Release_Date IMDB_Rating Rotten_Tomatoes_Rating Production_Budget Running_Time_min US_DVD_Sales US_Gross Worldwide_Gross 
+    --types numerical numerical numerical numerical numerical numerical numerical numerical 
+    --bin-width 30541006451.612904 0.5 5 2 20 2 5 5 --offset 315550800000 0 0 0 0 0 0 0 --csv
+    sql = "SELECT FLOOR(US_Gross/200) AS bin_US_Gross,  COUNT(*) as count FROM movies WHERE (US_Gross >= 53.14285714285714 AND US_Gross < 72) GROUP BY bin_US_Gross"
+    backward_sql = "SELECT FLOOR(US_Gross/200) AS bin_US_Gross,  COUNT(*) as count FROM movies WHERE (US_Gross >= 53.14285714285714 AND US_Gross < 72) GROUP BY bin_US_Gross"
+
 flights_covid_10M.csv args:
     --input-dir data/Flights_covid/flights_covid.csv --cube-dir cube/Flights_covid/ --name flight_covid_10M 
     --dimensions callsign icao24 registration typecode origin destination day --types categorical categorical categorical categorical categorical categorical temporal
@@ -687,8 +811,13 @@ bike_10M.csv args:
     --input-dir data/Bikes/Divvy_Trips.csv --name bike --dimensions geohash USER_TYPE START_TIME -types spatial categorical temporal
     sql = "SELECT USER_TYPE AS bin_USER_TYPE,  COUNT(*) as count FROM tbl_bike GROUP BY bin_USER_TYPE"
     
+<<<<<<< HEAD
 flights_1M_numerical.csv args:
     --input-dir data/dataset_flights_1M.csv --name flights_numerical_1M --dimensions DISTANCE AIR_TIME ARR_TIME DEP_TIME ARR_DELAY DEP_DELAY --types numerical numerical numerical numerical categorical categorical 
+=======
+flights_numerical_1M.csv args:
+    --input-dir data/Flights/dataset_flights_1M.csv --cube-dir cube/Flights/ --name flights_numerical_1M --dimensions DISTANCE AIR_TIME ARR_TIME DEP_TIME ARR_DELAY DEP_DELAY --types numerical numerical numerical numerical numerical numerical 
+>>>>>>> d13bd1676f33a60ff17e8a9b0c0c3a8302f91d42
     sql = "SELECT FLOOR(ARR_TIME/1) AS bin_ARR_TIME,  COUNT(*) as count FROM flights WHERE (AIR_TIME >= 150 AND AIR_TIME < 500 AND DISTANCE >= 0 AND DISTANCE < 1000) GROUP BY bin_ARR_TIME"
     execute_direct_query(crossindex, sql)
 

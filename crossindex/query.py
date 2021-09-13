@@ -71,7 +71,7 @@ class Condition(object):
             print('numerical')
         return res
 
-    def match_csv(self, df, dimension):
+    def match_csv(self, df, dimension, offset=0, bin_width=1):
         condition = self.value if self.value.__class__ == list else [self.value]
         if self.type == Type.categorical:
             if type(condition[0]) is float:
@@ -80,7 +80,8 @@ class Condition(object):
         elif self.type == Type.temporal:
             return df[(df[dimension]>=condition[0])&(df[dimension]<=condition[1])]
         elif self.type == Type.numerical:
-            return df[(df[dimension]>=condition[0])&(df[dimension]<condition[1])]
+            condition_bin = [int((c-offset)//bin_width) for c in condition]
+            return df[(df[dimension]>=condition_bin[0])&(df[dimension]<condition_bin[1])]
 
     def match(self, ds, R=None):
         value = ds.value
@@ -226,6 +227,7 @@ class Query(object):
             if groupby.startswith('bin'):
                 groupby = groupby[4:]
             self.groupby = groupby
+        self.measure = self.groupby if self.measure=='*' else self.measure
         self.result = ResultSet(self.groupby, self.agg + '(' + self.measure + ')')
 
     def parse_conditions(self, sql):
@@ -270,31 +272,22 @@ class Query(object):
                 conditions.append(condition)
         return list(set(conditions))
 
-    def compute(self):
+    def compute(self, valid_id):
+        res = self.cube.R.loc[valid_id]
+        idx = self.cube.dimensions.index(self.groupby)
+        res[self.groupby] = (res[self.groupby]-self.cube.offset[idx])//self.cube.bin_width[idx]
         if self.agg == aggregation.get('CNT'):
-            for i in range(len(self.result.x_data)):
-                count = 0
-                intervals = self.result.y_intervals[i]
-                for interval in intervals:
-                    count = count + interval.count
-                self.result.y_data.append(count)
+            xy_series = res[self.groupby].value_counts().sort_index()
+            self.result.x_data = list(xy_series.index.astype(str))
+            self.result.y_data = list(xy_series.values)
         elif self.agg == aggregation.get('AVG'):
-            for i in range(len(self.result.x_data)):
-                sum = 0
-                count = 0
-                intervals = self.result.y_intervals[i]
-                for interval in intervals:
-                    sum = sum + self.cube.R.iloc[interval.begin:interval.end + 1][self.measure].sum()
-                    count = count + interval.count
-                average = sum / count
-                self.result.y_data.append(average)
+            xy_series = res.groupby(self.groupby)[self.measure].sum()
+            self.result.x_data = list(xy_series.index.astype(str))
+            self.result.y_data = list(xy_series.values)
         elif self.agg == aggregation.get('SUM'):
-            for i in range(len(self.result.x_data)):
-                sum = 0
-                intervals = self.result.y_intervals[i]
-                for interval in intervals:
-                    sum = sum + self.cube.R.iloc[interval.begin:interval.end + 1][self.measure].sum()
-                self.result.y_data.append(sum)
+            xy_series = res.groupby(self.groupby)[self.measure].mean()
+            self.result.x_data = list(xy_series.index.astype(str))
+            self.result.y_data = list(xy_series.values)
 
     def get_query_index_sql(self, idx, tbname):
         where_clause = ""
@@ -384,15 +377,16 @@ class Query(object):
     # 返回最后一个重叠 dimension 的下标
     # 第二个返回参数代表最后一个 dimension 的新谓词是否在原谓词上进行缩小
     def get_deepest_overlapped_idx(self, new_conditions):
+        idx = -1
+        flag = False
         for i in range(len(new_conditions)):
             old_condition = self.wheres[i]
             new_condition = new_conditions[i]
             if old_condition.value is None and new_condition.value is None:
                 continue
             elif old_condition.value is None or new_condition.value is None:
-                return i-1, False
+                break
             elif new_condition.value != old_condition.value:
-                flag = False
                 if old_condition.type == Type.categorical:
                     if type(old_condition.value[0]) is float and \
                             old_condition.value[0] <= new_condition.value[0] \
@@ -407,13 +401,16 @@ class Query(object):
                     if old_condition.value.find(new_condition.value) > 0:
                         flag = True
                 elif old_condition.type == Type.numerical:
+                    # print(old_condition.value, new_condition.value)
                     if old_condition.value[0] <= new_condition.value[0] and new_condition.value[1] <= old_condition.value[1]:
                         flag = True
 
                 if flag:
-                    return i, True
-                return i-1, False
-        return len(new_conditions)-1, False
+                    idx = i
+                break
+            else:
+                idx = i
+        return idx, flag
 
     def is_backward_query(self, sql):
         if self.where_n == 0:
